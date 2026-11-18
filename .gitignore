@@ -1,0 +1,17 @@
+# your own files - never share these
+settings*.json
+save*.json
+log*.txt
+Custom Songs/
+Game Files*/
+__pycache__/
+# game files from your disc (Konami's - not to be shared)
+*.iso
+*.wbfs
+*.rvz
+*.gcz
+*.ciso
+*.wia
+*.dol
+*.brsar
+*.thp
