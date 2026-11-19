@@ -8437,13 +8437,7 @@ const Loading = {
             // the video stages (27 moon and snow, 28 circuit world, 29 water cave): a fixed head-on view of
             // the framed monitor at the right, no dancer; it plays the song's video, else the stage movie
             if (pvStage) {
-              // (camera fitted to the Wii footage vz/pvreal.png, 1 player: the 80 x 45 screen is 46% of the picture's
-              // width, its middle at 68% across and just below half way - MEASURED, not traced from main.dol. The
-              // old camera, 62 away and dead centre, made the video fill the screen. 2 players / DOUBLE: centred,
-              // ASSUMED - no footage of those.)
-              const pvOne = !P2 && !GROUP && styleNow() !== 'double';
-              const pvX = pvOne ? -30.4 : 0;
-              this.stage.pvCam = { eye: [pvX, 1, 117], at: [pvX, 1, -50], roll: 0, fov: 45, near: 1, far: 100000 };
+              this.stage.pvCam = { eye: [0, 0, 62], at: [0, 0, -50], roll: 0, fov: 45, near: 1, far: 100000 };
               this.stage.noDancer = true;
               if (ddr2Video) this.stage.setMovie(song.movie.file, { sync: true });
             }

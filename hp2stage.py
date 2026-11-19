@@ -601,6 +601,13 @@ def stage(path, ddr2=False):
     spots = {}
     for sname, mats in objset.items():
         hit = next((j for _, j, k in props if sname.startswith(k)), None)
+        if hit is None:
+            # DDR II's own rule (its video stages: OBJSET_pv03_01 is the spot of OBJB_Z_pv03_WI): the spot's name
+            # without its last _nn is the prop's name between the prefix and the last _part. (The HP4 rule above
+            # never matches these - 'pv03_01' doesn't start with 'pv03_WI' - and without it the pv monitors were
+            # drawn at the stage's centre, right in front of the camera, so the videos filled the screen.)
+            base = sname.rsplit('_', 1)[0]
+            hit = next((j for _, j, k in props if '_' in k and k.rsplit('_', 1)[0] == base), None)
         if hit is not None:
             spots.setdefault(hit, []).extend(mats)
     for i, (name, off, size) in enumerate(parts):

@@ -581,7 +581,12 @@ void main() {
       // (HP4: alpha > 0 for every kind - Dolphin FIFO log of an HP4 song: the 3D draws' alpha compare is only ever
       // ALWAYS or GREATER 0, never 160. So soft-edged pictures like STG202's floor spot A_24_signal3 fade out
       // instead of being cut to a hard disc)
-      gl.uniform1f(u.uCut, k === 0 ? -1 : x.a0 || (typeof HP4 !== 'undefined' && HP4) ? 0 : 160);
+      // (DDR II's video stages: their sky (stars 128, aurora, the moon's glow) and the monitor's frosted frame
+      // (alpha 92-167) all show on the Wii (the user's Dolphin shot of the moon-and-snow stage, 2026-11-19), so
+      // these models are cut at alpha > 0. The renderer's per-model switch for that (model +0x148, the third
+      // argument of 0x80177184) wasn't traced to where the game sets it - ASSUMED for these models only.)
+      const cut0 = this.pvCam && this.noDancer && /^(BG_|OBJB_Z_pv)/i.test(md.m.name || '');
+      gl.uniform1f(u.uCut, k === 0 ? -1 : x.a0 || cut0 || (typeof HP4 !== 'undefined' && HP4) ? 0 : 160);
       // (fog: 0x801438a4 sets it only while the fog manager's +580 is 1 - 0 during play, so none)
       gl.uniform1f(u.uFog, 0);
       if (g.nrm && litOn) { gl.bindBuffer(gl.ARRAY_BUFFER, g.nrm); gl.enableVertexAttribArray(a.aNrm); gl.vertexAttribPointer(a.aNrm, 3, gl.FLOAT, false, 0, 0); }
