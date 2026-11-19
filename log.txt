@@ -1,7 +1,1 @@
-16:56:45 lights: PacDrive64.dll not found. Get it from Ultimarc's PacDrive SDK and put it next to DDR II PC (or pick it here).
-16:56:46 game folder C:\Users\john_\Downloads\Dance Dance Revolution II (USA) (En,Fr,Es) songs 80
-16:56:46 Hottest Party folder C:\Users\john_\Downloads\Dance Dance Revolution - Hottest Party (USA) songs 51
-16:56:46 Hottest Party 2 folder C:\Users\john_\Downloads\Dance Dance Revolution - Hottest Party 2 (USA) songs 51
-16:56:46 Hottest Party 3 folder C:\Users\john_\Downloads\Dance Dance Revolution - Hottest Party 3 (USA) songs 59
-16:56:46 DDR II PC running at http://127.0.0.1:8767/ - close this window to quit
-16:56:47 movie frames select/OP.thp
+
