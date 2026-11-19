@@ -26,6 +26,7 @@ MIME = {'.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.mp3': 
 BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+# a folder name made safe (no characters Windows refuses, at most 40 long)
 def clean_name(name):
     name = BAD.sub('', (name or '').strip()).strip(' .')
     return name[:40]
@@ -74,6 +75,7 @@ def parse(path):
     return {'meta': meta, 'charts': charts}
 
 
+# 'a=b,c=d' (a StepMania BPMS / STOPS line) -> [(a, b), (c, d)] as numbers
 def pairs(s):
     out = []
     for item in (s or '').split(','):
@@ -133,6 +135,7 @@ def notes(text, lanes):
     return out
 
 
+# a StepMania file -> (chart in DDR II's form, levels, BPMs)
 def convert(path):
     song = parse(path)
     tp, bpms = tempo(song['meta'])
@@ -241,6 +244,7 @@ def find_file(folder, name, exts):
     return None if exts is None else next((os.path.join(folder, n) for n in sorted(names) if n.lower().endswith(exts)), None)
 
 
+# the first picture in a folder whose name has one of the words
 def _named(folder, words):
     try:
         names = sorted(os.listdir(folder))
@@ -253,14 +257,17 @@ def _named(folder, words):
     return None
 
 
+# a song folder's jacket picture
 def jacket_file(folder):
     return _named(folder, ('-jacket', '_jacket', ' jacket', '-jk', '_jk', 'jacket', 'jk'))
 
 
+# a song folder's background picture
 def bg_file(folder):
     return _named(folder, ('-bg', '_bg', ' bg', 'bg', 'background'))
 
 
+# the Custom Songs folder: folders of converted songs
 class Library:
     def __init__(self, root):
         self.root = root
@@ -268,12 +275,14 @@ class Library:
         self.songs = {}
         self.scan()
 
+    # the folders inside Custom Songs
     def folders(self):
         try:
             return sorted(n for n in os.listdir(self.root) if os.path.isdir(os.path.join(self.root, n)))
         except OSError:
             return []
 
+    # read every song in every folder
     def scan(self):
         songs = {}
         for folder in self.folders():
@@ -292,6 +301,7 @@ class Library:
         self.songs = songs
         return songs
 
+    # one song's details for the song list
     def info(self, folder, name, sdir, f):
         song = parse(f)
         m = song['meta']
@@ -331,6 +341,7 @@ class Library:
             '_file': f, '_music': music, '_image': jacket, '_bg': bg, '_video': video,
         }
 
+    # the song list as the page gets it (without the private '_' fields)
     def public(self):
         return [{k: v for k, v in s.items() if not k.startswith('_')} for s in self.songs.values()]
 
@@ -342,12 +353,14 @@ class Library:
         os.makedirs(os.path.join(self.root, name), exist_ok=True)
         return name
 
+    # delete a whole folder of custom songs
     def delete(self, name):
         p = os.path.join(self.root, clean_name(name))
         if os.path.isdir(p) and os.path.dirname(os.path.abspath(p)) == os.path.abspath(self.root):
             shutil.rmtree(p)
         self.scan()
 
+    # delete one custom song
     def remove(self, sid):
         s = self.songs.get(sid)
         if s:
@@ -398,6 +411,7 @@ class Library:
         return added, skipped, noconv
 
 
+# the time in seconds of a chart position (tp = the tempo table)
 def seconds_at(tp, off):
     o, s = tp['offs'], tp['secs']
     i = 0

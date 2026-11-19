@@ -41,6 +41,7 @@ def blocks(d, start=0):
         o += 8
 
 
+# a track's animation script: the list of commands from offset o
 def script(d, o, limit=4096):
     cmds, t = [], 0
     for i in range(limit):
@@ -56,6 +57,7 @@ def script(d, o, limit=4096):
     return cmds
 
 
+# a CAE layout block: its parts, each with its tracks
 def parse(d, o):
     n = struct.unpack_from('>H', d, o + 8)[0]
     tab = struct.unpack_from('>I', d, o + 12)[0]

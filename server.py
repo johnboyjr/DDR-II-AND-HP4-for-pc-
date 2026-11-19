@@ -4,7 +4,7 @@ Reads the extracted Dance Dance Revolution II (USA, Wii) files on request and se
 them to the browser game in web/. Nothing is converted or copied; the game folder is
 only ever read. Standard library only.
 """
-import base64, json, os, socket, struct, sys, threading, time, traceback, webbrowser, subprocess, re, math
+import base64, json, os, socket, struct, sys, threading, time, traceback, webbrowser, subprocess, re
 from sfx import SoundIndex
 import dance
 import ddr2fx
@@ -34,6 +34,7 @@ CUSTOM_DIR = os.path.join(HERE, 'Custom Songs')
 LIB = None
 
 
+# the custom song library (made the first time it's asked for)
 def library():
     global LIB
     if LIB is None:
@@ -49,6 +50,7 @@ SNDTAB_VA = 0x8027A5B8      # per slot: group, music sound, voice sound, 0, 0
 CUSTOM_FLAG = 0x80000000
 
 
+# write a line to the console window and to log.txt, with the time
 def log(*a):
     msg = time.strftime('%H:%M:%S ') + ' '.join(str(x) for x in a)
     print(msg, flush=True)
@@ -68,6 +70,7 @@ def load_settings():
         return {}
 
 
+# write settings.json (to a temporary file first, then swapped in, so a crash can't leave half a file)
 def save_settings(s):
     tmp = SETTINGS + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
@@ -98,6 +101,7 @@ def locate(root):
     return None
 
 
+# is the game in this folder? Returns (main.dol, the files folder) or None (the files are in root or root/files)
 def locate_here(root):
     for dol, files in [(os.path.join(root, 'sys', 'main.dol'), root),
                        (os.path.join(root, 'sys', 'main.dol'), os.path.join(root, 'files'))]:
@@ -106,6 +110,7 @@ def locate_here(root):
     return None
 
 
+# look in Downloads, Desktop and the home folder for an extracted game
 def default_game_folder():
     home = os.path.expanduser('~')
     for base in (os.path.join(home, 'Downloads'), os.path.join(home, 'Desktop'), home):
@@ -119,6 +124,7 @@ def default_game_folder():
     return None
 
 
+# main.dol, the game's program: read values at the game's memory addresses
 class Dol:
     def __init__(self, path):
         self.d = open(path, 'rb').read()
@@ -126,25 +132,30 @@ class Dol:
         self.secs = [s for s in zip(struct.unpack_from('>18I', d, 0), struct.unpack_from('>18I', d, 0x48),
                                     struct.unpack_from('>18I', d, 0x90)) if s[2]]
 
+    # memory address -> place in the file (None if it isn't in the file)
     def off(self, va):
         for o, a, s in self.secs:
             if a <= va < a + s:
                 return o + va - a
         return None
 
+    # the 32-bit number at a memory address
     def u32(self, va):
         return struct.unpack_from('>I', self.d, self.off(va))[0]
 
+    # place in the file -> memory address
     def va(self, off):
         for o, a, s in self.secs:
             if o <= off < o + s:
                 return a + off - o
         return None
 
+    # n bytes at a memory address
     def bytes(self, va, n):
         o = self.off(va)
         return self.d[o:o + n]
 
+    # the text (ending in a zero byte) at a memory address
     def cstr(self, va):
         o = self.off(va)
         if o is None:
@@ -180,9 +191,11 @@ class Rsar:
         self.files = table(self.ib + 24)
         self.groups = table(self.ib + 32)
 
+    # sound number -> its file number
     def sound_file(self, i):
         return self.U(self.sounds[i] + 4)
 
+    # a file's outside path (music kept as its own .brstm file), or None
     def file_ext(self, i):
         ext = self.U(self.files[i] + 16)
         if not ext:
@@ -190,12 +203,14 @@ class Rsar:
         o = self.ib + ext
         return self.d[o:self.d.index(b'\0', o)].decode('latin1')
 
+    # a sound group's wave data: (offset, size) in the archive
     def group_wave(self, g):
         o = self.groups[g]
         woff, wsize = struct.unpack_from('>II', self.d, o + 24)
         return woff, wsize
 
 
+# the entries of a 'WII' archive block starting at base: [(size, offset) ...]
 def wii_entries(d, base):
     n = struct.unpack_from('>I', d, base + 8)[0]
     return [struct.unpack_from('>II', d, base + 0x10 + 8 * i) for i in range(n)]
@@ -209,6 +224,7 @@ class Art:
         ents = wii_entries(self.d, 0)
         self.tpl = {'jacket': ents[9][0], 'title': ents[10][0]}
 
+    # one picture of a kind, as PNG
     def image(self, kind, idx):
         d, a = self.d, self.tpl[kind]
         n, table = struct.unpack_from('>II', d, a + 4)
@@ -256,6 +272,7 @@ class Resources:
         self.files = files
         self.cache = {}
 
+    # an archive's bytes (read once and kept)
     def data(self, key):
         if key not in self.cache:
             for rel in RES_FILES.get(key, []):
@@ -279,6 +296,7 @@ class Resources:
     HP4_PATHS = {'mmu': '/0/0', 'fs2': '/0/0/5', 'mfm': '/0/0/6'}
     hp4 = False
 
+    # HP4 keeps the same pictures in other places: the DDR II name -> HP4's archive and path
     def hp4_path(self, key, path):
         if key in self.HP4_PATHS:
             return 'cmn', self.HP4_PATHS[key] + path
@@ -287,6 +305,7 @@ class Resources:
             return 'cmn', '/0' + ''.join('/' + (str(int(x) + 1) if i == 0 else x) for i, x in enumerate(parts))
         return key, path
 
+    # one entry of an archive by its path (the page's /api/res/...)
     def get(self, key, path):
         if self.hp4:
             key, path = self.hp4_path(key, path)
@@ -334,6 +353,7 @@ class Thp:
         self.fps, self.n, self.first, self.data_off = fps, nframes, first, data_off
         self.frames = None
 
+    # find every frame's place in the movie file (once)
     def index(self):
         if self.frames is None:
             fr = []
@@ -353,9 +373,11 @@ class Thp:
             self.frames = fr
         return self.frames
 
+    # the movie's size, frame rate, frame count and sound, for the page
     def info(self):
         return {'fps': self.fps, 'frames': self.n, 'w': self.w, 'h': self.h, 'audio': self.audio}
 
+    # one frame's JPEG made readable for a browser
     @staticmethod
     def fix_jpeg(v):
         # THP leaves out JPEG byte stuffing in the scan data; browsers need it back.
@@ -384,6 +406,7 @@ class Thp:
                 out.append(struct.pack('>I', len(b)) + b)
         return b''.join(out)
 
+    # count frames from start (and their sound) packed for the page
     def chunk(self, start, count, want_audio):
         fr = self.index()
         out = []
@@ -404,6 +427,7 @@ class Thp:
         return struct.pack('>I', len(out)) + b''.join(out)
 
 
+# an opened DDR II game folder: its songs, charts, music, pictures, movies and tables from main.dol
 class Game:
     DB_VA, DB_STRIDE, DB_COUNT, SNDTAB_VA = DB_VA, DB_STRIDE, DB_COUNT, SNDTAB_VA
     WRONG_DOL = 'This main.dol is not the US version of DDR II (SUREA4).'
@@ -431,6 +455,7 @@ class Game:
     # COURSE 1-10 then WORKOUT 1-10: 24-byte records of six numbers (slot - 1, -1 = none)
     COURSE_VA = 0x8027B688
 
+    # the game's 10 courses and 10 workout courses (main.dol table)
     def courses(self):
         rows = []
         for k in range(20):
@@ -450,6 +475,7 @@ class Game:
     TOUR_POOLS_VA = 0x80279420
     TOUR_POOLS_N = 18
 
+    # TOURNAMENT's 32 requests (main.dol table) with their wording
     def tournament(self):
         rows = []
         for k in range(32):
@@ -537,6 +563,7 @@ class Game:
         except Exception:
             return None
 
+    # the stage a song plays on (its stage file number)
     def stage_for(self, slot):
         # the step lessons: stage 19 (STG020.bin, the STG110 models - the yellow-grid floor; Dolphin camtrace of
         # Step Lesson 1: STG110 was the stage in memory). STG023.bin is the same file.
@@ -573,6 +600,7 @@ class Game:
     # mode 8 (0x800452b0 / 0x800457c8): auto play, 1,000,000-point scoring, any button quits.
     DEMO_VA = 0x8027b878
 
+    # the 16 demo plays of the attract mode (main.dol table)
     def demos(self):
         out = []
         b = self.dol.bytes(self.DEMO_VA, 16 * 6)
@@ -598,6 +626,7 @@ class Game:
             out.append(d)
         return out
 
+    # the unlock table (main.dol): what opens at how many DDR POINTS
     def unlocks(self):
         rows = []
         for k in range(400):
@@ -607,9 +636,11 @@ class Game:
             rows.append(list(w))
         return rows or None
 
+    # a song's record in the song table
     def entry(self, slot):
         return self.dol.bytes(self.DB_VA + (slot - 1) * self.DB_STRIDE, self.DB_STRIDE)
 
+    # a song's row in the sound table (its sound groups)
     def sound_row(self, slot):
         return struct.unpack('>5I', self.dol.bytes(self.SNDTAB_VA + (slot - 1) * 20, 20))
 
@@ -644,12 +675,14 @@ class Game:
                     radar=[list(e[168 + 5 * k:173 + 5 * k]) for k in range(5)],
                     preview=bool(self.preview_path(slot)), title=slot - 1)
 
+    # does the song have its music on the disc?
     def has_audio(self, slot):
         try:
             return self.rsar.group_wave(self.sound_row(slot)[0])[1] >= 200000
         except (IndexError, struct.error):
             return False
 
+    # a menu music's .brstm file by its sound name
     def bgm_path(self, name):
         i = self.sfx.names.get(name)
         if i is None:
@@ -661,9 +694,11 @@ class Game:
         full = os.path.join(self.files, 'sound', p.replace('/', os.sep))
         return full if os.path.isfile(full) else None
 
+    # a song's chart file
     def chart_path(self, slot):
         return os.path.join(self.files, 'ssq', 'ss4', 'MU_DDR_%03d.ss4' % slot)
 
+    # a song's preview clip (the song select sample)
     def preview_path(self, slot):
         for s in (slot, slot - 1 if slot % 2 == 0 else slot + 1):
             try:
@@ -676,6 +711,7 @@ class Game:
                     return full
         return None
 
+    # the .thp movies in a movie sub-folder
     def movie_list(self, sub):
         d = os.path.join(self.files, 'movie', sub)
         try:
@@ -693,6 +729,7 @@ class Game:
             return {'file': 'bgv/' + bgv[(slot // 2) % len(bgv)], 'sync': False}
         return None
 
+    # a movie by its path inside the movie folder (checked so nothing outside can be asked for)
     def movie(self, rel):
         rel = rel.replace('\\', '/')
         if '..' in rel or not re.match(r'^[A-Za-z0-9_/]+\.thp$', rel):
@@ -701,6 +738,7 @@ class Game:
             self.movies[rel] = Thp(os.path.join(self.files, 'movie', rel.replace('/', os.sep)))
         return self.movies[rel]
 
+    # build the song list from the song table
     def _songs(self):
         out = []
         titles = {}
@@ -747,6 +785,7 @@ class Game:
     # (0x80076628); starting it (0x8004be98) turns id 92 into 92 + 2 x (rand() % 3) in every mode but 5.
     VERSION_GROUPS = [(93, 95, 97)]
 
+    # join songs that are versions of one song (London EVOLVED A / B / C)
     def _versions(self, out):
         for grp in self.VERSION_GROUPS:
             vers = []
@@ -784,6 +823,7 @@ class Game:
     # slot 200 + n (not the "Lesson by DJ" song, slot 137, as assumed before).
     LESSON_BASE = 800
 
+    # DDR SCHOOL's lessons: names and wording from the text file
     def lessons(self):
         words = []
         try:
@@ -848,6 +888,7 @@ class Game:
             p += size
         return bytes(d)
 
+    # a song's music: the bytes of its wave archive, cut out of the sound archive (the page decodes it)
     def audio(self, slot):
         if self.LESSON_BASE < slot <= self.LESSON_BASE + 15:
             slot = 200 + (slot - self.LESSON_BASE)
@@ -872,6 +913,7 @@ class Hp4Game(Game):
     hp4 = True
     LESSON_BASE = 800
 
+    # HP4: build the song list from its song table
     def _songs(self):
         out = []
         for slot in range(1, self.DB_COUNT + 1):
@@ -887,12 +929,14 @@ class Hp4Game(Game):
             out.append(self.song_dict(slot, e, name))
         return out
 
+    # HP4: one song as the page wants it
     def song_dict(self, slot, e, name):
         song = dict(full=slot, short=False, cut=None, name=name, flags=struct.unpack_from('>I', e, 4)[0],
                     tier=0, movie=self.song_movie(slot), jacket=slot - 1, alt=None)
         song.update(self.song_info(slot, e))
         return song
 
+    # HP4: GROOVE CIRCUIT's requests (the same table shape as TOURNAMENT)
     def tournament(self):
         t = super().tournament()
         if t:
@@ -917,6 +961,7 @@ class Hp4Game(Game):
             t['songs'] = extra
         return t
 
+    # HP4: a song's levels, BPM, length and other details from its record
     def song_info(self, slot, e):
         keys = self.chart_keys(slot)
         single = [e[128 + i] if ((d << 8) | 0x14) in keys else 0 for i, d in enumerate((4, 1, 2, 3))] + [0]
@@ -987,6 +1032,7 @@ class Hp4Game(Game):
     # the last of their songs is unlocked; 1-5 hold only songs that are open from the start.
     COURSE_VA = 0x80260370
 
+    # HP4: its courses, with the songs' unlock points
     def courses(self):
         c = Game.courses(self)
         if not c:
@@ -1021,6 +1067,7 @@ class Hp4Game(Game):
     TASK_VA = 0x8026DE00
     TASK_GAUGE_VA = 0x802B7CC0
 
+    # HP4: its unlock table
     def unlocks(self):
         rows = Game.unlocks(self)
         if not rows:
@@ -1098,6 +1145,7 @@ class Hp4Game(Game):
         del self.STAGE_HISTORY[:-20]
         return n
 
+    # HP4 has no extra stage parts
     def stage_extras(self, slot):
         return []
 
@@ -1204,6 +1252,7 @@ def open_hp3(path):
             log('Hottest Party 3 open failed:', ex)
 
 
+# every song for the page: the game's, then the other discs', then custom songs
 def all_songs(g):
     out = list(g.songs)
     h = STATE['hp']
@@ -1232,6 +1281,7 @@ def all_songs(g):
     return out
 
 
+# open a game folder and make it the one being served
 def open_game(path):
     with LOCK:
         try:
@@ -1272,10 +1322,12 @@ def find_dolphin_tool():
     return shutil.which('DolphinTool')
 
 
+# is ffmpeg set up (needed for custom songs only)?
 def ffmpeg_ok():
     return custom.ffmpeg() is not None
 
 
+# what SETUP shows: which folders and tools are set and whether they work
 def setup_status():
     st = load_settings()
     g = STATE['game']
@@ -1422,6 +1474,7 @@ def pick_path(title, filt):
     return r.stdout.strip() or None
 
 
+# tell custom.py where ffmpeg is (from settings.json)
 def apply_ffmpeg_setting():
     p = load_settings().get('ffmpeg')
     custom.FFMPEG = p if p and os.path.isfile(p) else None
@@ -1464,6 +1517,7 @@ def pick_songs(kind):
 DANCE_CACHE = {}
 
 
+# Windows' folder picker (the SETUP screen's Browse); returns the folder or None
 def pick_folder():
     if os.name != 'nt':
         return None
@@ -1480,10 +1534,13 @@ MIME = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=ut
         '.css': 'text/css', '.png': 'image/png', '.json': 'application/json'}
 
 
+# answers the page's requests: files from web/, and everything under /api/
 class H(BaseHTTPRequestHandler):
+    # (no line per request in the console)
     def log_message(self, *a):
         pass
 
+    # send an answer: JSON for a dict or list, otherwise the bytes as they are
     def send(self, code, body, ctype='application/octet-stream'):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
@@ -1529,6 +1586,7 @@ class H(BaseHTTPRequestHandler):
                     return
                 left -= len(chunk)
 
+    # a GET request: work out the path and query, then route_get
     def do_GET(self):
         try:
             u = urlparse(self.path)
@@ -1538,6 +1596,7 @@ class H(BaseHTTPRequestHandler):
             log('GET', self.path, 'failed:', ex, traceback.format_exc())
             self.send(500, {'error': str(ex)})
 
+    # a POST request: read its JSON body, then route_post
     def do_POST(self):
         try:
             n = int(self.headers.get('Content-Length') or 0)
@@ -1547,6 +1606,7 @@ class H(BaseHTTPRequestHandler):
             log('POST', self.path, 'failed:', ex, traceback.format_exc())
             self.send(500, {'error': str(ex)})
 
+    # every GET address the page can ask for (one 'if p == ...' per address)
     def route_get(self, p):
         g = STATE['game']
         q = self.query
@@ -2442,6 +2502,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, img) if img else self.send(404, {'error': 'no image'})
         self.send(404, {'error': 'unknown'})
 
+    # every POST address (saving settings and saves, setup, custom songs, lights ...)
     def route_post(self, p, body):
         if p == '/api/quit':
             # (a newer copy starting up asks an older one to make way - main())
@@ -2627,6 +2688,7 @@ def _version():
 VERSION = _version()
 
 
+# is the copy already running on this port older than this one?
 def other_copy_is_older(url):
     # ask the copy on the port for its version; an older one (or one too old to have /api/version) is asked to
     # quit, and this one waits for the port
@@ -2653,12 +2715,14 @@ def other_copy_is_older(url):
     return False
 
 
+# the web server (one thread per request)
 class Server(ThreadingHTTPServer):
     # one copy per port: no address reuse, and on Windows exclusive use (SO_REUSEADDR there lets a second
     # server bind the same port while the first keeps answering)
     # (elsewhere SO_REUSEADDR only lets a restart through a closed copy's TIME_WAIT, so it stays on)
     allow_reuse_address = os.name != 'nt'
 
+    # take the port for this copy alone
     def server_bind(self):
         if os.name == 'nt' and hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -2672,6 +2736,7 @@ class Server(ThreadingHTTPServer):
 PAGES = {'last': None, 'bye': None}
 
 
+# quit the program a few seconds after the game's page is closed (or 3 minutes after it was last heard from)
 def watch_pages():
     while True:
         time.sleep(1)
@@ -2685,6 +2750,7 @@ def watch_pages():
             os._exit(0)
 
 
+# start-up: read settings, open the game, start the server, open the browser
 def main():
     apply_ffmpeg_setting()
     try:

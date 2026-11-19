@@ -12,7 +12,6 @@
 import os
 import re
 import struct
-import zlib
 
 import hp
 
@@ -66,6 +65,7 @@ def find_files(root):
     return None
 
 
+# look in Downloads, Desktop and the home folder for an extracted Hottest Party 2 disc
 def default_folder():
     home = os.path.expanduser('~')
     for base in (os.path.join(home, 'Downloads'), os.path.join(home, 'Desktop'), home):
@@ -175,6 +175,7 @@ def tpl_png(d, w, h, fmt, off):
     return hp.png(w, h, bytes(px))
 
 
+# an opened Hottest Party 2 disc
 class HP2Game:
     name = 'HOTTEST PARTY 2'
 
@@ -204,10 +205,12 @@ class HP2Game:
             out[k] = (lv, (lo, hi))
         return out
 
+    # a chart file by its number
     def chart_raw(self, k):
         with open(os.path.join(self.files, 'ssq', 'MU_DDR_%03d.ss9' % (k + 1)), 'rb') as f:
             return f.read()
 
+    # build the song list
     def _songs(self):
         tab = self._table()
         out = []
@@ -240,12 +243,14 @@ class HP2Game:
                             jacket='/api/hp2art/%d' % slot, tab='/api/jacket/%d' % slot, alt=None, flags=0, tier=0, movie=None, ssq=k))
         return out
 
+    # a song by slot number
     def song(self, slot):
         for s in self.songs:
             if s['slot'] == slot:
                 return s
         return None
 
+    # a song's chart converted to DDR II's .ss4 form
     def chart(self, slot):
         s = self.song(slot)
         return hp.to_ss4(self.chart_raw(s['ssq'])) if s else None
@@ -262,6 +267,7 @@ class HP2Game:
             data = f.read(wsize)
         return data if data[:4] == b'RWAR' else None
 
+    # a song's preview clip
     def preview_path(self, slot):
         p = os.path.join(self.files, 'sound', 'stream', 'mu_sam_%03d.brstm' % (slot - SLOT_BASE + 1))
         return p if os.path.isfile(p) else None
@@ -410,6 +416,7 @@ def ga_texts(files):
 GA_GRADE = {1: 'D', 2: 'C', 3: 'B', 4: 'A', 5: 'AA', 6: 'AAA'}
 
 
+# GROOVE ARENA's table from Hottest Party 2's main.dol
 def ga_table(root_sys):
     p = os.path.join(root_sys, 'main.dol')
     if not os.path.isfile(p):
@@ -430,6 +437,7 @@ def ga_table(root_sys):
     return None
 
 
+# GROOVE ARENA's rounds: the table joined with its wording
 def ga_rounds(sysdir, texts):
     recs = ga_table(sysdir)
     if not recs:

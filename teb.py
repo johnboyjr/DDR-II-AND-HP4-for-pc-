@@ -24,10 +24,12 @@ H = lambda d, o: struct.unpack_from('>H', d, o)[0]
 S16 = lambda d, o: struct.unpack_from('>h', d, o)[0]
 
 
+# round for the page (4 places)
 def r(v, n=4):
     return round(v, n)
 
 
+# a curve: n [time, value] pairs at an offset
 def curve(b, off, n):
     return [[r(F(b, off + 8 * i)), r(F(b, off + 8 * i + 4))] for i in range(n)] if off and n else []
 
@@ -49,6 +51,7 @@ def tracks(b, off):
     return out
 
 
+# one emitter part of an effect file
 def part(b, p, old):
     fl = U(b, p)
     o = [U(b, p + 4 * i) for i in range(11)]

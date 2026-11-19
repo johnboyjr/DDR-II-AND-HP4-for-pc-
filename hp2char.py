@@ -23,6 +23,7 @@ import hp2stage as S
 from hp2stage import Zmb, wii_entries, b64f, zab, quat_euler
 
 
+# 16-bit numbers -> base64 text for the page
 def u16b64(v):
     return base64.b64encode(array('H', v).tobytes()).decode()
 
@@ -74,6 +75,7 @@ def decompose(m):
     return [m[12], m[13], m[14]], [math.degrees(rx), math.degrees(ry), math.degrees(rz)], s
 
 
+# each vertex's bone weights cut to the 4 biggest (what the page's skinning takes)
 def pack4(ws):
     J, Wt = [], []
     for pairs in ws:
@@ -92,6 +94,7 @@ def _tpls(path):
     return [(d, o) for _, o, _ in wii_entries(d)]
 
 
+# a TPL file's pictures by name
 def _bitmaps(tpl, names):
     out = []
     if not tpl:
@@ -104,6 +107,7 @@ def _bitmaps(tpl, names):
     return out
 
 
+# does any of these mesh rows have skin data (its 11th field is not 0)?
 def _skinned(model, rows):
     for r in rows:
         try:
@@ -344,6 +348,7 @@ def dance(path, bpm, fps=30):
     return dict(fps=fps, perMeasure=per_measure, clips=clips, timeline=tl, cameras=[])
 
 
+# the two keys round frame f and how far between them (0-1)
 def _seg(keys, f):
     if f <= keys[0][0]:
         return keys[0], keys[0], 0.0
@@ -360,11 +365,13 @@ def _seg(keys, f):
     return a, b, (f - a[0]) / ((b[0] - a[0]) or 1)
 
 
+# a value at frame f, straight line between keys
 def _lin(keys, f, c):
     a, b, u = _seg(keys, f)
     return a[1 + c] + (b[1 + c] - a[1 + c]) * u
 
 
+# a rotation at frame f, turned smoothly between keys (slerp)
 def _slerp(keys, f):
     a, b, u = _seg(keys, f)
     qa, qb = a[1:5], b[1:5]

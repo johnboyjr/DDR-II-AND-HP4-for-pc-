@@ -62,6 +62,7 @@ def pack4(ws):
     return J, W
 
 
+# a Hottest Party character file -> model, skeleton and textures for the page
 def character(path):
     u = entries(open(path, 'rb').read())[0]
     h = Hsf(u)
@@ -114,6 +115,7 @@ def character(path):
     return dict(objects=skel, meshes=meshes, materials=mats, attrs=attrs, bitmaps=h.bitmaps())
 
 
+# a track's value at frame f
 def sample(tr, f):
     k = tr['keys']
     if not isinstance(k, list):

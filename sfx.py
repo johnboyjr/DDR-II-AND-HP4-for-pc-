@@ -9,6 +9,7 @@ import random, struct
 U = lambda d, o: struct.unpack_from('>I', d, o)[0]
 
 
+# the sound archive's index (.brsar): sounds by name, their files, banks and waves
 class SoundIndex:
     def __init__(self, path, info, ib):
         self.path, self.d, self.ib = path, info, ib
@@ -24,12 +25,14 @@ class SoundIndex:
         self._group_of_file = None
         self.cache = {}
 
+    # give each sound its name
     def set_strings(self, strings):
         for i, o in enumerate(self.sounds):
             sid = U(self.d, o)
             if sid < len(strings):
                 self.names[strings[sid]] = i
 
+    # which group a file is in (worked out once)
     def group_of_file(self, fid):
         if self._group_of_file is None:
             m = {}
@@ -44,11 +47,13 @@ class SoundIndex:
             self._group_of_file = m
         return self._group_of_file.get(fid)
 
+    # n bytes of the archive at an offset
     def read(self, off, n):
         with open(self.path, 'rb') as f:
             f.seek(off)
             return f.read(n)
 
+    # a file's bytes (kept after the first read)
     def file_bytes(self, fid):
         k = ('f', fid)
         if k not in self.cache:
@@ -56,6 +61,7 @@ class SoundIndex:
             self.cache[k] = (self.read(loc[0], loc[1]), loc) if loc else (None, None)
         return self.cache[k]
 
+    # a wave archive's bytes (kept after the first read)
     def rwar(self, woff, wsize):
         k = ('w', woff)
         if k not in self.cache:
@@ -95,6 +101,7 @@ class SoundIndex:
                                 tune=inst['tune']))
         return out
 
+    # play through a sequence (the sound's little score) and list its notes
     def run(self, seq, base, start):
         pc = base + start
         vars_ = [0] * 32
@@ -200,6 +207,7 @@ class SoundIndex:
                 pass
         return notes
 
+    # the wave and settings a bank uses for a program and key
     def instrument(self, bnk, prg, key):
         data = U(bnk, 0x10)
         db = data + 8
@@ -232,6 +240,7 @@ class SoundIndex:
             return None
         return resolve(ref)
 
+    # wave idx of a wave archive
     @staticmethod
     def wave(war, idx):
         if war[:4] != b'RWAR':

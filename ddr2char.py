@@ -20,6 +20,7 @@ import hp2char
 DIR = ('sound', 'stream', 'character')
 
 
+# the folder with DDR II's character files
 def folder(files):
     return os.path.join(files, *DIR)
 
@@ -40,6 +41,7 @@ def dancers(files):
     return out
 
 
+# a character file by name, whatever its upper / lower case
 def _path(files, name):
     d = folder(files)
     hit = next((f for f in os.listdir(d) if f.upper() == name.upper()), None) if os.path.isdir(d) else None
@@ -68,6 +70,7 @@ def _trs(p, r, s):
             m02 * s[2], m12 * s[2], m22 * s[2], 0, p[0], p[1], p[2], 1]
 
 
+# multiply two 4 x 4 matrices
 def _mul(a, b):
     return [sum(a[k * 4 + r] * b[c * 4 + k] for k in range(4)) for c in range(4) for r in range(4)]
 
@@ -114,6 +117,7 @@ def glb(files, cid, outfit, acc=0):
     return to_glb(c)
 
 
+# a decoded character -> a .glb file's bytes (for looking at it in other programs)
 def to_glb(c):
     objs = c['objects']
     bin_ = bytearray()
@@ -243,15 +247,13 @@ def to_glb(c):
     return out
 
 
-def _swap(b):
-    return b
-
-
+# base64 text -> floats
 def _floats(s):
     b = base64.b64decode(s)
     return struct.unpack('=%df' % (len(b) // 4), b)
 
 
+# base64 text -> 16-bit numbers
 def _u16(s):
     b = base64.b64decode(s)
     return struct.unpack('=%dH' % (len(b) // 2), b)

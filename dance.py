@@ -29,6 +29,7 @@ def pools(dol):
     return out
 
 
+# the entries of a 'WII' archive: [(size, offset) ...]
 def wii_entries(d):
     n = U(d, 8)
     return [struct.unpack_from('>II', d, 0x10 + 8 * i) for i in range(n)]
@@ -69,6 +70,7 @@ def clip(z):
     return tracks
 
 
+# the dance clips in one motion file
 def read_part(path):
     d = open(path, 'rb').read()
     return [c for c in (clip(d[o:o + s]) for o, s in wii_entries(d) if s) if c]
@@ -84,6 +86,7 @@ def song_info(dol, slot):
     return struct.unpack_from('>I', b, 4)[0], struct.unpack_from('>H', b, 30)[0]
 
 
+# the songs that have a fixed routine (main.dol table)
 def fixed(dol):
     out = {}
     for i in range(64):
@@ -96,6 +99,7 @@ def fixed(dol):
     return out
 
 
+# pick one of the set bits of a mask at random (1-based)
 def _bit(mask, rng):
     bits = [v + 1 for v in range(16) if mask >> v & 1]
     return rng.choice(bits) if bits else 1
@@ -146,6 +150,7 @@ def pool_base(rng):
     return (rng.randrange(32768) * rng.randrange(32768) + 0x12345678) & 0xffffffff
 
 
+# the cue file beside a motion file, if there is one
 def _cue(path):
     f = path.replace('_MOT_010.bin', '_FRE.bin')
     try:
@@ -154,6 +159,7 @@ def _cue(path):
         return None
 
 
+# a pooled routine: pick the parts, then load them
 def pool_dance(folder, rows, base):
     return pool_dance_parts(folder, pool_picks(rows, base))
 

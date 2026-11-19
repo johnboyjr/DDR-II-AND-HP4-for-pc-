@@ -104,6 +104,7 @@ def slots(dol, cfg=None):
     return out
 
 
+# the address in main.dol of a stage's effect table
 def stage_table(dol, n, cfg=None):
     if cfg:
         return 0x8026D6A0 + 24 * n if 0 <= n <= 7 else 0x8026D790
@@ -218,6 +219,7 @@ def chr_bank(files):
     return bank(open(p, 'rb').read(), 0)
 
 
+# the effects shared by every stage (GAME_STG_EFF.bin)
 def global_bank(files):
     p = os.path.join(files, 'game', 'GAME_STG_EFF.bin')
     if not os.path.isfile(p):
@@ -317,6 +319,7 @@ def stage_effects(path, files, dol, n, cfg=None):
     return out
 
 
+# a stage's video-screen model
 def stage_screen(path):
     d = open(path, 'rb').read()
     top = hp2stage.wii_entries(d)
@@ -325,6 +328,7 @@ def stage_screen(path):
     return None
 
 
+# (the work of stage_screen, on one archive level)
 def _screen(d, ents):
     if True:
         if ents and d[ents[0][1]:ents[0][1] + 4] == b'ZAR\0':

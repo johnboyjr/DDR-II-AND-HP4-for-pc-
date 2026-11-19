@@ -12,6 +12,7 @@ BITS = struct.calcsize('P') * 8
 NAMES = ('PacDrive64.dll', 'PacDrive.dll') if BITS == 64 else ('PacDrive32.dll', 'PacDrive.dll')
 
 
+# the cabinet lights (Ultimarc PAC Drive) - runs in its own thread
 class Lights:
     def __init__(self):
         self.dll = None
@@ -23,6 +24,7 @@ class Lights:
         self.cv = threading.Condition()
         self.thread = None
 
+    # find PacDrive.dll (the one picked in Options, or in the usual places)
     def find(self, picked=None):
         if picked and os.path.isfile(picked):
             return picked
@@ -77,6 +79,7 @@ class Lights:
                 self.want[i] = int(bits[i]) & 0xFFFF if i < len(bits) else 0
             self.cv.notify()
 
+    # the thread: send the lights whenever what's wanted changes
     def run(self):
         while True:
             with self.cv:
@@ -91,6 +94,7 @@ class Lights:
             with self.cv:
                 self.sent = want if self.boards else list(self.want)
 
+    # what the Options screen shows about the lights
     def status(self):
         return {'ok': self.boards > 0, 'boards': self.boards, 'dll': self.path, 'msg': self.msg}
 

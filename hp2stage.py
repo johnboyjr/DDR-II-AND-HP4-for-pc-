@@ -23,13 +23,14 @@ import struct
 from array import array
 
 import hp2
-import hp
 
 
+# numbers -> base64 text for the page: 32-bit floats
 def b64f(vals):
     return base64.b64encode(array('f', vals).tobytes()).decode()
 
 
+# bytes
 def b64u8(vals):
     return base64.b64encode(bytes(vals)).decode()
 
@@ -57,11 +58,13 @@ def wii_entries(d, b=0):
     return out
 
 
+# move a point by a 4 x 4 matrix
 def mat_mul_point(m, p):
     x, y, z = p
     return (x * m[0] + y * m[4] + z * m[8] + m[12], x * m[1] + y * m[5] + z * m[9] + m[13], x * m[2] + y * m[6] + z * m[10] + m[14])
 
 
+# turn a direction by a 4 x 4 matrix (kept 1 long)
 def mat_mul_dir(m, n):
     x, y, z = n
     v = (x * m[0] + y * m[4] + z * m[8], x * m[1] + y * m[5] + z * m[9], x * m[2] + y * m[6] + z * m[10])
@@ -74,15 +77,18 @@ def mat4mul(a, b):
     return [sum(a[r * 4 + k] * b[k * 4 + c] for k in range(4)) for r in range(4) for c in range(4)]
 
 
+# a ZMB model file (Hottest Party 2 / 3 / DDR II stages and characters)
 class Zmb:
     def __init__(self, z):
         if z[:4] != b'ZMB ':
             raise ValueError('not a ZMB model')
         self.z = z
 
+    # the 32-bit number at an offset
     def u32(self, o):
         return struct.unpack_from('>I', self.z, o)[0]
 
+    # the model's texture names
     def textures(self):
         o = self.u32(0x18)
         if not 0 < o < len(self.z) - 4:
@@ -101,6 +107,7 @@ class Zmb:
             p += 32
         return out
 
+    # the materials
     def materials(self):
         o = self.u32(0x1c)
         if not 0 < o < len(self.z) - 12:
@@ -149,6 +156,7 @@ class Zmb:
             out.append(m)
         return out
 
+    # the nodes (parts of the model and how they hang together)
     def nodes(self):
         o = self.u32(0x20)
         if not 0 < o < len(self.z) - 12:
@@ -168,6 +176,7 @@ class Zmb:
             out.append(dict(name=name, m=m, parent=parent, meshes=meshes))
         return out
 
+    # one mesh: positions, normals, texture coordinates, colours and faces
     def mesh(self, r):
         z = self.z
         (mid, _, nf, npos, _, nnrm, nuv, ncol, fo, po, wo, no, uo, co) = struct.unpack_from('>14I', z, r)

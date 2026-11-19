@@ -86,6 +86,7 @@ def find_files(root):
     return None
 
 
+# look in Downloads, Desktop and the home folder for an extracted Hottest Party disc
 def default_folder():
     home = os.path.expanduser('~')
     for base in (os.path.join(home, 'Downloads'), os.path.join(home, 'Desktop'), home):
@@ -134,6 +135,7 @@ def lzss(src, size):
     return bytes(out[:size])
 
 
+# entry i of a packed file, uncompressed (kind 1 = LZSS)
 def unpack(d, offs, i):
     usz, kind = struct.unpack_from('>2I', d, offs[i])
     if kind == 1:
@@ -142,6 +144,7 @@ def unpack(d, offs, i):
     return zlib.decompress(d[offs[i] + 16:offs[i] + 16 + csz])
 
 
+# split a chart file into its chunks: (type, parameter, count, body)
 def chunks(u):
     p, out = 0, []
     while p + 12 <= len(u):
@@ -195,6 +198,7 @@ def to_ss4(u):
     return b''.join(out)
 
 
+# the time in seconds of a chart position, from the chart's tempo chunk
 def tempo_time(u, off):
     for typ, p2, count, body in chunks(u):
         if typ == 1:
@@ -209,6 +213,7 @@ def tempo_time(u, off):
     return 0
 
 
+# RGBA pixels -> a PNG file's bytes
 def png(w, h, rgba):
     def chunk(t, b):
         return struct.pack('>I', len(b)) + t + b + struct.pack('>I', zlib.crc32(t + b) & 0xffffffff)
@@ -343,6 +348,7 @@ def tex_index_png(t, which=0):
     return png(w, h, bytes(px))
 
 
+# an opened Hottest Party disc: its songs, charts, music and pictures
 class HPGame:
     name = 'HOTTEST PARTY'
 
@@ -380,6 +386,7 @@ class HPGame:
             out.append((k, fid & 0xFFFF, sq >> 16, bpm, title))
         return out
 
+    # build the song list from the game's table
     def _songs(self):
         out = []
         self.hidden = []
@@ -421,15 +428,18 @@ class HPGame:
                             jacket='/api/jacket/%d' % slot, alt=None, flags=0, tier=0, movie=None, ssq=sq))
         return out
 
+    # a song by slot number
     def song(self, slot):
         for s in self.songs + getattr(self, 'hidden', []):
             if s['slot'] == slot:
                 return s
         return None
 
+    # a chart file by its number, uncompressed
     def chart_raw(self, sq):
         return unpack(self.ssq, self.ssq_offs, sq)
 
+    # a song's chart converted to DDR II's .ss4 form
     def chart(self, slot):
         s = self.song(slot)
         return to_ss4(self.chart_raw(s['ssq'])) if s else None
@@ -460,6 +470,7 @@ class HPGame:
         struct.pack_into('>I', rwar, 0x18, 0x40)        # DATA (the RWAV starts here: entry offset 0)
         return bytes(rwar + rwav)
 
+    # a song's preview clip
     def preview_path(self, slot):
         n = min(slot - SLOT_BASE + 1, 50)
         p = os.path.join(self.files, 'sound', 'stream', 'mu_sam_%03d.brstm' % n)
@@ -499,6 +510,7 @@ class HPGame:
         p = s and os.path.join(self.files, 'data', 'c_000_%02d.bin' % (s['ssq'] + 1))
         return p if p and os.path.isfile(p) else None
 
+    # a character's model file
     def char_path(self, cid):
         p = os.path.join(self.files, 'data', 'c_%s.bin' % cid)
         return p if os.path.isfile(p) else None
@@ -550,6 +562,7 @@ class HPGame:
                 self._logo = b''
         return self._logo or None
 
+    # a song's banner picture as PNG
     def jacket(self, slot):
         s = self.song(slot)
         if not s:
@@ -575,6 +588,7 @@ _MCHR = {0x10: ' ', 0x82: ',', 0x85: '.', 0xc1: "'", 0xc2: '!', 0xc3: '?', 0xc0:
          ord(']'): '(', ord('^'): ')', ord('='): '-'}
 
 
+# a message's bytes -> text (the game's own letter codes)
 def _mtext(b):
     out, i = '', 0
     while i < len(b):
@@ -587,6 +601,7 @@ def _mtext(b):
     return re.sub(r'\s+', ' ', out).strip()
 
 
+# GROOVE CIRCUIT's request wording from the message file
 def gc_requests(files):
     p = os.path.join(files, 'mess', 'messdata_eng.bin')
     if not os.path.isfile(p):
@@ -611,6 +626,7 @@ def gc_requests(files):
 GC_GRADE = {1: 'AAA', 2: 'AA', 3: 'A', 4: 'B', 5: 'C', 6: 'D'}
 
 
+# GROOVE CIRCUIT's table from Hottest Party's main.dol
 def gc_table(sysdir):
     p = os.path.join(sysdir, 'main.dol')
     if not os.path.isfile(p):

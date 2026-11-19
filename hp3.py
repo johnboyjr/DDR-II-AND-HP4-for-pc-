@@ -40,6 +40,7 @@ def find_files(root):
     return None
 
 
+# look in Downloads, Desktop and the home folder for an extracted Hottest Party 3 disc
 def default_folder():
     home = os.path.expanduser('~')
     for base in (os.path.join(home, 'Downloads'), os.path.join(home, 'Desktop'), home):
@@ -64,11 +65,13 @@ ARTISTS = {
 }
 
 
+# a title made plain for matching (lower case, no punctuation)
 def _norm(s):
     s = s.lower().replace('♥', ' ').replace('’', '').replace("'", '')
     return re.sub(r'[^a-z0-9 ]', '', s)
 
 
+# an opened Hottest Party 3 disc (built on Hottest Party 2's reader)
 class HP3Game(hp2.HP2Game):
     name = 'HOTTEST PARTY 3'
     disc = 'hp3'
@@ -90,18 +93,21 @@ class HP3Game(hp2.HP2Game):
         d = self.dol
         return list(zip(struct.unpack_from('>18I', d, 0), struct.unpack_from('>18I', d, 0x48), struct.unpack_from('>18I', d, 0x90)))
 
+    # memory address -> place in main.dol
     def _a2o(self, a):
         for of, ad, sz in self._sections():
             if sz and ad <= a < ad + sz:
                 return of + a - ad
         return None
 
+    # place in main.dol -> memory address
     def _o2a(self, o):
         for of, ad, sz in self._sections():
             if sz and of <= o < of + sz:
                 return ad + o - of
         return None
 
+    # find where the song table starts in main.dol
     def _table_start(self):
         d = self.dol
         o = d.find(b'disturbia\0')
@@ -159,6 +165,7 @@ class HP3Game(hp2.HP2Game):
                 titles.setdefault(m.group(1).replace('\n', ' '), '')
         return titles
 
+    # a song's full title: the title that starts most like its short name (None if nothing matches)
     def _name(self, short, titles, used):
         s = _norm(short).strip()
         if s.startswith('roppongi') or s.startswith('hottest p'):
@@ -173,6 +180,7 @@ class HP3Game(hp2.HP2Game):
                 best, bl = t, l
         return best if bl >= min(5, len(s)) else None
 
+    # build the song list
     def _songs(self):
         tab = self._table()
         titles = self._titles()
@@ -230,6 +238,7 @@ class HP3Game(hp2.HP2Game):
         except OSError:
             return []
 
+    # a song's video, if it has one
     def song_movie(self, k):
         pv = 'ddr%03d.thp' % (k + 1)
         if os.path.isfile(os.path.join(self.files, 'movie', 'pv', pv)):
@@ -239,6 +248,7 @@ class HP3Game(hp2.HP2Game):
             return {'file': 'hp3:stage/' + loops[(k * 7) % len(loops)], 'sync': False}
         return None
 
+    # a movie by its path (checked so nothing outside can be asked for)
     def movie(self, rel):
         rel = rel.replace('\\', '/')
         if '..' in rel or not re.match(r'^[A-Za-z0-9_/]+\.thp$', rel):
@@ -255,6 +265,7 @@ class HP3Game(hp2.HP2Game):
     LESSON_BASE = 3900
     LESSON_GROUP = 57
 
+    # DDR SCHOOL's 18 lessons
     def lessons(self):
         if hasattr(self, '_lessons'):
             return self._lessons
@@ -279,11 +290,13 @@ class HP3Game(hp2.HP2Game):
         self._lessons = out
         return out
 
+    # a song (or lesson) by slot number
     def song(self, slot):
         if self.LESSON_BASE < slot <= self.LESSON_BASE + 18:
             return next((l for l in self.lessons() if l['slot'] == slot), None)
         return super().song(slot)
 
+    # a song's or lesson's chart in .ss4 form
     def chart(self, slot):
         s = self.song(slot)
         if s and s.get('lesson'):
@@ -291,6 +304,7 @@ class HP3Game(hp2.HP2Game):
                 return hp.to_ss4(f.read())
         return super().chart(slot)
 
+    # a song's or lesson's music
     def audio(self, slot):
         s = self.song(slot)
         if s and s.get('lesson'):
@@ -302,10 +316,12 @@ class HP3Game(hp2.HP2Game):
             return data if data[:4] == b'RWAR' else None
         return super().audio(slot)
 
+    # a chart file by its number
     def chart_raw(self, k):
         with open(os.path.join(self.files, 'ssq', 'ss9', 'MU_DDR_%03d.ss9' % (k + 1)), 'rb') as f:
             return f.read()
 
+    # a song's preview clip
     def preview_path(self, slot):
         d = os.path.join(self.files, 'sound', 'stream')
         want = 'mu_sam_%03d.brstm' % (slot - SLOT_BASE + 1)

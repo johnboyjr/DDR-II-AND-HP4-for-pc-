@@ -5,13 +5,14 @@ the stage floor and props, each followed by its animation, then where the dancer
 camera moves. Here they're turned into one JSON for web/stage.js: geometry as base64 float arrays,
 textures as PNGs, the object tree, and the animation curves.
 """
-import base64, math, struct, zlib
+import base64, struct, zlib
 from array import array
 
 NAMES = ('scene color material attribute vertex normal st face object bitmap palette motion cenv skeleton '
          'part cluster shape mapAttr matrix symbol string').split()
 
 
+# the entries of a Hottest Party .bin archive, each uncompressed
 def entries(d):
     n = struct.unpack_from('>I', d, 0)[0]
     offs = list(struct.unpack_from('>%dI' % n, d, 4)) + [len(d)]
@@ -22,20 +23,24 @@ def entries(d):
     return out
 
 
+# texture pixel formats -> (r, g, b, a): RGB5A3
 def rgb5a3(v):
     if v & 0x8000:
         return (((v >> 10) & 31) * 255 // 31, ((v >> 5) & 31) * 255 // 31, (v & 31) * 255 // 31, 255)
     return (((v >> 8) & 15) * 17, ((v >> 4) & 15) * 17, (v & 15) * 17, ((v >> 12) & 7) * 255 // 7)
 
 
+# RGB565
 def rgb565(v):
     return (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31, 255)
 
 
+# IA8 (grey + alpha)
 def ia8(v):
     return (v & 255, v & 255, v & 255, v >> 8)
 
 
+# RGBA pixels -> a PNG file's bytes
 def png(w, h, px):
     def chunk(t, b):
         return struct.pack('>I', len(b)) + t + b + struct.pack('>I', zlib.crc32(t + b) & 0xffffffff)
@@ -44,19 +49,23 @@ def png(w, h, px):
         chunk(b'IDAT', zlib.compress(raw, 6)) + chunk(b'IEND', b'')
 
 
+# numbers -> base64 text for the page: 32-bit floats
 def b64f(vals):
     return base64.b64encode(array('f', vals).tobytes()).decode()
 
 
+# bytes
 def b64u8(vals):
     return base64.b64encode(bytes(vals)).decode()
 
 
+# an HSF model file (Hottest Party's stages and characters), read section by section
 class Hsf:
     def __init__(self, u):
         self.u = u
         self.sec = {n: struct.unpack_from('>ii', u, 8 + 8 * i) for i, n in enumerate(NAMES)}
 
+    # a name from the string section
     def s(self, off):
         u, so = self.u, self.sec['string'][0]
         try:
@@ -64,6 +73,7 @@ class Hsf:
         except ValueError:
             return ''
 
+    # a section's data buffers by name
     def buffers(self, name, fmt, size):
         u = self.u
         o, c = self.sec[name]
@@ -74,6 +84,7 @@ class Hsf:
             out.append([struct.unpack_from(fmt, u, base + d + size * k) for k in range(n)])
         return out
 
+    # the face lists (triangles, quads, strips) of every mesh
     def faces(self):
         u = self.u
         o, c = self.sec['face']
@@ -102,6 +113,7 @@ class Hsf:
             out.append(fl)
         return out
 
+    # the colour palettes of paletted textures
     def palettes(self):
         u = self.u
         po, pc = self.sec['palette']
@@ -114,6 +126,7 @@ class Hsf:
             out.append([f(v) for v in vals])
         return out
 
+    # every texture as RGBA
     def bitmaps(self):
         u = self.u
         bo, bc = self.sec['bitmap']
@@ -189,6 +202,7 @@ class Hsf:
             out.append(dict(name=self.s(name), w=w, h=h, png=base64.b64encode(png(w, h, px)).decode()))
         return out
 
+    # the materials and which textures they use
     def materials(self):
         u = self.u
         mo, mc = self.sec['material']
@@ -211,6 +225,7 @@ class Hsf:
             out.append(dict(color=col, vtx=vtx, alpha=round(1 - inv, 3), flags=flags, attrs=alist))
         return out, attrs
 
+    # the objects (nodes): name, parent, place and mesh
     def objects(self):
         u = self.u
         oo, oc = self.sec['object']
@@ -226,6 +241,7 @@ class Hsf:
                             scl=[round(x, 4) for x in base[6:9]], face=face, vert=vert, nrm=nrm, col=col, st=st))
         return out
 
+    # the animation tracks
     def motion(self):
         u = self.u
         mo, mc = self.sec['motion']
