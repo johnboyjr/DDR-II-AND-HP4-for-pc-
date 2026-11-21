@@ -84,7 +84,7 @@
       this.step = 'busy'; this.msg = 'Making your code...';
       try {
         const code = await Net.hostStart();
-        const b = this.panel(`<b>1.</b> Send this code to your friend (Discord, text, anything):<textarea readonly id="oc">${code}</textarea>
+        const b = this.panel(`<div style="margin:0 0 10px;padding:8px 10px;background:#4a1020;border:1px solid #ff6a8a;border-radius:6px;color:#ffd6de"><b>Heads up:</b> your code contains your internet (IP) address - that is how the two games find each other. Only send it to someone you know and trust, and never post it publicly.</div><b>1.</b> Send this code to your friend (Discord, text, anything):<textarea readonly id="oc">${code}</textarea>
           <button id="cp">COPY CODE</button><br><br><b>2.</b> Paste the REPLY code your friend sends back:<textarea id="rc" placeholder="DDR2-..."></textarea>
           <button id="go">CONNECT</button> <button id="bk">BACK</button><div id="ms" style="margin-top:6px;color:#ffe86a"></div>`);
         b.querySelector('#cp').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(code); b.querySelector('#ms').textContent = 'Copied.'; };
@@ -98,7 +98,7 @@
     },
     join() {
       this.step = 'codes';
-      const b = this.panel(`Paste the HOST's code:<textarea id="hc" placeholder="DDR2-..."></textarea><button id="mk">MAKE REPLY CODE</button> <button id="bk">BACK</button>
+      const b = this.panel(`<div style="margin:0 0 10px;padding:8px 10px;background:#4a1020;border:1px solid #ff6a8a;border-radius:6px;color:#ffd6de"><b>Heads up:</b> your code contains your internet (IP) address - that is how the two games find each other. Only send it to someone you know and trust, and never post it publicly.</div>Paste the HOST's code:<textarea id="hc" placeholder="DDR2-..."></textarea><button id="mk">MAKE REPLY CODE</button> <button id="bk">BACK</button>
         <div id="rp"></div><div id="ms" style="margin-top:6px;color:#ffe86a"></div>`);
       b.querySelector('#bk').onclick = () => this.back();
       b.querySelector('#mk').onclick = async () => {
@@ -153,6 +153,7 @@
           text(s, x, y, 28, on ? '#ffe86a' : '#fff', 'center');
         });
         text(this.msg || 'Both players need DDR II PC and their own disc. The host picks the songs.', 640, 470, 18, '#fff', 'center', 'normal');
+        text('The codes you swap contain your IP address: only share them with someone you trust.', 640, 505, 16, '#ff9db0', 'center', 'normal');
         keyHints('Left/Right: select    Enter: confirm    Esc: back');
       }
     },

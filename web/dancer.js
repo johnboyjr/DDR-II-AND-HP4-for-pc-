@@ -386,7 +386,7 @@ void main() {
 precision mediump float;
 varying vec3 vN; varying vec2 vUV; varying vec2 vUV2; varying vec3 vP; varying vec4 vCol;
 uniform sampler2D uLayer; uniform float uHasLayer; uniform float uShineF;
-uniform vec4 uColor; uniform sampler2D uTex; uniform float uHasTex; uniform float uGlow; uniform float uCut; uniform vec3 uEye;
+uniform vec4 uColor; uniform sampler2D uTex; uniform float uHasTex; uniform float uGlow; uniform float uFlash; uniform float uCut; uniform vec3 uEye;
 uniform float uSil; uniform sampler2D uSilTex; uniform vec2 uRes; uniform float uFade; uniform vec3 uTint;
 uniform float uMode; uniform sampler2D uRamp; uniform vec3 uAmbG; uniform vec3 uLdir; uniform float uLG;
 void main() {
@@ -429,6 +429,7 @@ void main() {
     col = c.rgb * uAmbG + texture2D(uRamp, vec2(nl, nl)).rgb;
   }
   col = mix(col, c.rgb * 1.25, uGlow);
+  col = mix(col, vec3(1.0), uFlash);           // (a Mii body's part flashing on SELECT BODY's OUTFIT buttons)
   gl_FragColor = vec4(col, c.a * uFade);
 }`;
 
@@ -447,7 +448,7 @@ void main() {
       if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
       gl.useProgram(p);
       this.a = {}; for (const n of ['aPos', 'aNrm', 'aUV', 'aUV2', 'aJ', 'aW', 'aCol']) this.a[n] = gl.getAttribLocation(p, n);
-      this.u = {}; for (const n of ['uVP', 'uModel', 'uJ', 'uSkin', 'uColor', 'uTex', 'uHasTex', 'uGlow', 'uCut', 'uEye', 'uSil', 'uSilTex', 'uRes', 'uFade', 'uTint', 'uMode', 'uRamp', 'uAmbG', 'uLdir', 'uLG', 'uLayer', 'uHasLayer', 'uShine', 'uShineE', 'uShineF']) this.u[n] = gl.getUniformLocation(p, n);
+      this.u = {}; for (const n of ['uVP', 'uModel', 'uJ', 'uSkin', 'uColor', 'uTex', 'uHasTex', 'uGlow', 'uFlash', 'uCut', 'uEye', 'uSil', 'uSilTex', 'uRes', 'uFade', 'uTint', 'uMode', 'uRamp', 'uAmbG', 'uLdir', 'uLG', 'uLayer', 'uHasLayer', 'uShine', 'uShineE', 'uShineF']) this.u[n] = gl.getUniformLocation(p, n);
       gl.enable(gl.DEPTH_TEST);
       this.white = this.texture(null);
     }
@@ -514,6 +515,7 @@ void main() {
       if (mesh.j && joints) gl.uniformMatrix4fv(this.u.uJ, false, joints);
       gl.uniform4fv(this.u.uColor, mat.color || [1, 1, 1, 1]);
       gl.uniform1f(this.u.uGlow, mat.glow || 0);
+      gl.uniform1f(this.u.uFlash, this.flash && mat.part && this.flash.part === mat.part ? this.flash.amt : 0);
       gl.uniform1f(this.u.uCut, mat.cut === undefined ? 0.02 : mat.cut);
       // (the face: this dancer's eyes / mouth picture this frame, Dancer3D.faceOf)
       const fsel = mat.face && mat.faceTex ? mat.faceTex[this.face ? this.face[mat.face] : 0] || mat.faceTex[0] : null;
@@ -761,7 +763,7 @@ void main() {
       return { color: pbr.baseColorFactor || [1, 1, 1, 1], tex: ti || null, doubleSided: !!m.doubleSided,
                blend: m.alphaMode === 'BLEND', cut: m.alphaMode === 'MASK' ? (m.alphaCutoff ?? 0.5) : m.alphaMode === 'BLEND' ? 0.01 : -1,
                // DDR II's heads: the eyes (1) / mouth (2) material and the pictures it switches between
-               add: !!x.add, face: x.face || 0, faceLayer: !!x.faceLayer, shineTex: x.shineTex >= 0 ? textures[x.shineTex] || null : null, faceTex: Array.isArray(x.faceTex) ? x.faceTex.map(k => k >= 0 ? textures[k] || null : null) : null };
+               add: !!x.add, part: x.part || 0, face: x.face || 0, faceLayer: !!x.faceLayer, shineTex: x.shineTex >= 0 ? textures[x.shineTex] || null : null, faceTex: Array.isArray(x.faceTex) ? x.faceTex.map(k => k >= 0 ? textures[k] || null : null) : null };
     });
     // nodes
     const nodes = (json.nodes || []).map((n, i) => {
@@ -896,7 +898,9 @@ void main() {
     }
     isDirect(raw) {
       if (this.directOk === undefined && raw) {
-        const names = Object.keys(raw), have = new Set(this.g.nodes.map(n => n.name));
+        // (finger bones don't count: the plain Mii bodies, CHR81 / 82, have none, and the game simply moves
+        // the bones a model has)
+        const names = Object.keys(raw).filter(n => !/Hand(Index|Middle|Ring|Pinky|Thumb)\d/.test(n)), have = new Set(this.g.nodes.map(n => n.name));
         this.directOk = names.length > 8 && names.filter(n => have.has(n)).length >= names.length * 0.9;
       }
       return !!this.directOk;
@@ -979,7 +983,10 @@ void main() {
         if (st.n > 0) st.n = (st.n + 1) % 11;
       }
       if (BLINKY[v] && !lock && SEQ[st.n] >= 0) b = SEQ[st.n];
-      return { 1: EYE[b], 2: a };
+      // (3: a Mii head's face picture - 0x80057d14 gives the head an RFL expression from the third column of
+      // 0x80271514 for mouth a (1 / 2 -> smile), else 0x8027153c[b] (eyes shut b = 2 -> blink); pictures
+      // are [normal, smile, blink], ddr2char.py)
+      return { 1: EYE[b], 2: a, 3: a ? 1 : b === 2 ? 2 : 0 };
     },
     // render one frame; returns the canvas to drawImage, or null
     render(ch, beat, endBeat, opts = {}) {
@@ -1009,6 +1016,7 @@ void main() {
         return R.canvas;
       }
       const R = this.R, pose = ch.pose(beat, endBeat);
+      R.flash = opts.flash || null;
       if (opts.view) R.beginView(opts.view);
       else {
         if (R.canvas.width !== 560 || R.canvas.height !== 720) { R.canvas.width = 560; R.canvas.height = 720; }

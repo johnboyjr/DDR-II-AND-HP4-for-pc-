@@ -4,7 +4,7 @@ Reads the extracted Dance Dance Revolution II (USA, Wii) files on request and se
 them to the browser game in web/. Nothing is converted or copied; the game folder is
 only ever read. Standard library only.
 """
-import base64, json, os, socket, struct, sys, threading, time, traceback, webbrowser, subprocess, re
+import base64, json, os, secrets, socket, struct, sys, threading, time, traceback, webbrowser, subprocess, re
 from sfx import SoundIndex
 import dance
 import ddr2fx
@@ -18,6 +18,7 @@ import hpstage
 import hpchar
 import hp2char
 import ddr2char
+import mii as MII
 from lights import LIGHTS
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
@@ -42,6 +43,14 @@ def library():
     return LIB
 SETTINGS = os.path.join(HERE, 'settings%s.json' % SUFFIX)
 PORT = 8768 if HP4 else 8767
+# SECURITY: other web sites open in the same browser can send requests to 127.0.0.1 too. So the server only
+# answers requests addressed to itself (the Host check also stops "DNS rebinding"), and anything that changes
+# something (a POST) must carry TOKEN - a secret made fresh at every start, handed only to the game's own page
+# (written into index.html as it is served). A page from another site can't read it, and can't send the
+# X-DDR-Token header without the browser first asking this server, which never says yes.
+TOKEN = secrets.token_hex(16)
+OK_HOSTS = {'127.0.0.1:%d' % PORT, 'localhost:%d' % PORT}
+OK_ORIGINS = {'http://' + h for h in OK_HOSTS}
 
 DB_VA = 0x802A44A8          # song table (US, SUREA4)
 DB_STRIDE = 412
@@ -1196,6 +1205,7 @@ class Hp4Game(Game):
 
 # ------------------------------------------------------------------ http
 STAGE_CACHE = {}
+MII_CACHE, MII_RES = {}, {}
 STATE = {'game': None, 'error': None, 'hp': None, 'hpError': None, 'hp2': None, 'hp2Error': None, 'hp3': None, 'hp3Error': None}
 LOCK = threading.Lock()
 
@@ -1588,6 +1598,8 @@ class H(BaseHTTPRequestHandler):
 
     # a GET request: work out the path and query, then route_get
     def do_GET(self):
+        if self.headers.get('Host') not in OK_HOSTS:
+            return self.send(403, 'forbidden', 'text/plain')
         try:
             u = urlparse(self.path)
             self.query = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -1599,12 +1611,32 @@ class H(BaseHTTPRequestHandler):
     # a POST request: read its JSON body, then route_post
     def do_POST(self):
         try:
+            p = urlparse(self.path).path
+            if not self.post_allowed(p):
+                log('refused a request to', p, 'from', self.headers.get('Origin') or 'no page')
+                return self.send(403, {'error': 'forbidden'})
             n = int(self.headers.get('Content-Length') or 0)
             body = json.loads(self.rfile.read(n) or b'{}')
-            self.route_post(urlparse(self.path).path, body)
+            self.route_post(p, body)
         except Exception as ex:
             log('POST', self.path, 'failed:', ex, traceback.format_exc())
             self.send(500, {'error': str(ex)})
+
+    # may this POST go ahead? The game's page sends TOKEN in X-DDR-Token. Two exceptions: the goodbye when the
+    # page closes (sendBeacon can't add a header - it still has to come from the game's own page; at worst it
+    # closes the game) and the newer copy of this program asking an older one to quit (Python, not a browser:
+    # no Origin header).
+    def post_allowed(self, p):
+        if self.headers.get('Host') not in OK_HOSTS:
+            return False
+        origin = self.headers.get('Origin')
+        if origin is not None and origin not in OK_ORIGINS:
+            return False
+        if secrets.compare_digest(self.headers.get('X-DDR-Token') or '', TOKEN):
+            return True
+        if p == '/api/bye' and origin in OK_ORIGINS:
+            return True
+        return p == '/api/quit' and origin is None and not self.headers.get('Referer')
 
     # every GET address the page can ask for (one 'if p == ...' per address)
     def route_get(self, p):
@@ -1620,7 +1652,10 @@ class H(BaseHTTPRequestHandler):
             full = os.path.normpath(os.path.join(WEB, name))
             if not full.startswith(WEB) or not os.path.isfile(full):
                 return self.send(404, 'not found', 'text/plain')
-            return self.send(200, open(full, 'rb').read(), MIME.get(os.path.splitext(full)[1], 'application/octet-stream'))
+            data = open(full, 'rb').read()
+            if name == 'index.html':      # the page gets this run's secret (see TOKEN)
+                data = data.replace(b'<head>', b'<head>\n<meta name="ddr-token" content="' + TOKEN.encode() + b'">', 1)
+            return self.send(200, data, MIME.get(os.path.splitext(full)[1], 'application/octet-stream'))
         if p == '/api/status':
             return self.send(200, {'ok': g is not None, 'error': STATE['error'], 'hp4': HP4,
                                    'folder': g.root if g else load_settings().get('game_folder')})
@@ -1885,14 +1920,53 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     c['sex'] = 0
             return self.send(200, out)
+        if p == '/api/miis':
+            # your Miis (read only): Dolphin's Wii NAND (Wii/shared2/menu/FaceLib/RFL_DB.dat in the usual Dolphin
+            # user folders, or settings 'mii_db'), Mii files (.mii, 74 bytes) in the game's "Miis" folder, then
+            # the face library's six Guests
+            st = load_settings()
+            try:
+                out = MII.all_miis(st.get('mii_db'), os.path.join(HERE, 'Miis'))
+            except Exception as ex:
+                log('miis failed:', ex)
+                out = []
+            g = STATE.get('game')
+            ok = bool(g and os.path.isfile(os.path.join(g.files, 'mii', 'RFLRes01.arc')))
+            return self.send(200, {'miis': out, 'faceLib': ok})
+        if p == '/api/miiicon':
+            # a Mii's picture (96 x 96 PNG, drawn like the Wii's RFLMakeIcon)
+            hx = q.get('mii', '')
+            g = STATE.get('game')
+            if not re.match(r'^[0-9a-fA-F]{148}$', hx) or not g:
+                return self.send(404, {'error': 'no mii'})
+            key = ('miiicon', hx.lower())
+            if key not in MII_CACHE:
+                try:
+                    res = MII_RES.get('res') or MII.Res.from_disc(g.files)
+                    MII_RES['res'] = res
+                    MII_CACHE[key] = MII.png(MII.icon(MII.head(res, MII.parse(bytes.fromhex(hx)), 128, 0), 96)) if res else None
+                except Exception as ex:
+                    log('mii icon failed:', ex)
+                    MII_CACHE[key] = None
+                if len(MII_CACHE) > 200:
+                    MII_CACHE.pop(next(iter(MII_CACHE)))
+            if not MII_CACHE.get(key):
+                return self.send(404, {'error': 'no picture'})
+            return self.send(200, MII_CACHE[key], 'image/png')
         m = re.match(r'^/api/ddr2char/(\d{2,3})/(\d{1,2})$', p)
         if m:
             g = STATE.get('game')
             acc = int(q.get('acc', '0') or 0) if (q.get('acc', '0') or '0').isdigit() else 0
-            key = ('ddr2char', m.group(1), int(m.group(2)), acc)
+            # (a Mii body with a Mii's head: ?mii=<its 74 bytes as hex>)
+            mhx = q.get('mii', '')
+            mraw = bytes.fromhex(mhx) if re.match(r'^[0-9a-fA-F]{148}$', mhx) else None
+            # (a Mii body's OUTFIT parts, each from its own outfit file: ?parts=a,b,c,d)
+            pq = q.get('parts', '')
+            parts = [int(x) for x in pq.split(',')][:4] if re.match(r'^\d{1,2}(,\d{1,2}){0,3}$', pq) else None
+            key = ('ddr2char', m.group(1), int(m.group(2)), acc, mhx.lower() if mraw else '', tuple(parts or ()))
             if key not in STAGE_CACHE:
                 try:
-                    data = ddr2char.glb(g.files, m.group(1), m.group(2), acc) if g else None
+                    data = ddr2char.glb(g.files, m.group(1), m.group(2), acc, mraw, parts) if g else None
                 except Exception as ex:
                     log('ddr2 dancer', m.group(1), 'failed:', ex)
                     data = None

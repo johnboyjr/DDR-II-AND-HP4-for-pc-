@@ -73,7 +73,7 @@ const isAuto = p => AUTO || /^demo$/i.test((p && p.name) || '');
 // ---------------------------------------------------------------- settings
 const DEFAULTS = {
   style: 'single', diff: 1, speed: 2, appearance: 'visible', turn: 'off', freezes: true,
-  offset: 0, gauge: 'normal', marvelous: true, unlocks: 'off', menuMusic: true, short: false, videoSize: 'wii', screen: 'wide', voice: true, menuSounds: true, movies: true, colors: 'rainbow', bindings: null, sort: 'game', game: 'ddr2', dancer: true, hpStage: 'random', hp4Stage: 'random', boardBump: 25, boardHold: 10, hpDancer: '001', hands: 'right', punch: true, dancerCustom: false, dancerModel: '', ddr2Char: 'random', ddr2Stage3d: true, ngBreaksCombo: false, jump: true, cut: false, guideline: 'beginner', judgePos: 'normal', autoSave: true, evaluation: true, scroll: 'normal', timingColor: false, metronome: false, songOn: true, clap: false, cameraWork: 'default', comboPerf: '50', dancerLight: 'pc', fps: 'max', showFps: false, glFast: true, songProgress: false, earlyLate: false, ghost: false, teamTurn: 'auto', gameLevel: 'medium', freezeGuide: true, judgeModel: 'wii',
+  offset: 0, gauge: 'normal', marvelous: true, unlocks: 'off', menuMusic: true, short: false, videoSize: 'wii', screen: 'wide', voice: true, menuSounds: true, movies: true, colors: 'rainbow', bindings: null, sort: 'game', game: 'ddr2', dancer: true, hpStage: 'random', hp4Stage: 'random', boardBump: 25, boardHold: 10, hpDancer: '001', hands: 'right', punch: true, dancerCustom: false, dancerModel: '', ddr2Char: 'random', miiHex: '', miiName: '', miiBody: 80, miiOutfit: 0, miiParts: [0, 0, 0, 0], ddr2Outfits: {}, ddr2Stage3d: true, ngBreaksCombo: false, jump: true, cut: false, guideline: 'beginner', judgePos: 'normal', autoSave: true, evaluation: true, scroll: 'normal', timingColor: false, metronome: false, songOn: true, clap: false, cameraWork: 'default', comboPerf: '50', dancerLight: 'pc', fps: 'max', showFps: false, glFast: true, songProgress: false, earlyLate: false, ghost: false, teamTurn: 'auto', gameLevel: 'medium', freezeGuide: true, judgeModel: 'wii',
   custom: null,                     // DDR CUSTOM: which game each part comes from (see CUSTOM_PARTS)
   lights: true, lightMap: null,     // PAC Drive outputs (1-64) per panel; null = P1 L D U R on 1-4, P2 on 5-8, P3 9-12, P4 13-16
 };
@@ -272,9 +272,11 @@ function unlockedBetween(before, after) {
     .map(([pts, label, slots]) => ({ label, songs: (slots || []).map(sl => SONGS.find(s => (s.full || s.slot) === sl)).filter(Boolean) }));
 }
 
+// this run's secret from the server (written into index.html; every POST must carry it - see TOKEN in server.py)
+const DDR_TOKEN = (document.querySelector('meta[name="ddr-token"]') || {}).content || '';
 // ask the server: GET a path, or POST it a JSON body; returns the JSON answer
 async function api(path, body) {
-  const r = await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) });
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'X-DDR-Token': DDR_TOKEN }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(path + ': ' + r.status);
   return r.headers.get('Content-Type').includes('json') ? r.json() : r.arrayBuffer();
 }
@@ -1642,6 +1644,10 @@ async function ddr2Dancer(force) {
     const c = DDR2_CHARS.find(x => x.id === force);
     if (c) { if (Dancer3D.useExtras) Dancer3D.useExtras([]); const url = '/api/ddr2char/' + c.id + '/' + c.outfits[0]; if (Dancer3D.customFor !== url) await Dancer3D.useModel(url); return; }
   }
+  // your Mii (MY CHARACTER > Mii): its body + outfit with its head; while it can't be used (still locked,
+  // or the Mii is gone) a RANDOM dancer stands in
+  const miiUrl = !force && S.ddr2Char === 'mii' ? miiDancerUrl() : null;
+  if (miiUrl) { if (Dancer3D.useExtras) Dancer3D.useExtras([]); if (Dancer3D.customFor !== miiUrl) await Dancer3D.useModel(miiUrl); return; }
   // The game's own rule (CSelect::setPlayerChr, main.dol 0x8004a728): RANDOM draws from the 9 dancers
   // (ids 200-208 = files CHR201-209) that are unlocked, then outfit = rand % 2 - but outfit 1 only
   // once that dancer's second outfit is unlocked (the disc's unlock table, type 2), otherwise outfit 0.
@@ -1659,6 +1665,9 @@ async function ddr2Dancer(force) {
   const pick = chosen && !lockedAt(gameId(chosen), 0) ? chosen : from[Math.floor(wiiRandom() * from.length)];
   let outfit = pick.outfits.length > 1 ? pick.outfits[Math.floor(wiiRandom() * 2) % pick.outfits.length] : pick.outfits[0];
   if (lockedAt(gameId(pick), 1)) outfit = pick.outfits[0];
+  // (a dancer picked in MY CHARACTER wears the OUTFIT picked there)
+  const mine = chosen === pick && S.ddr2Outfits ? S.ddr2Outfits[pick.id] : undefined;
+  if (mine !== undefined && pick.outfits[mine] && !lockedAt(gameId(pick), mine)) outfit = pick.outfits[mine];
   // (HP4: with a CHOREOGRAPH player - and in DANCE VIEW - every dancer wears accessory mask 0x188: the dance
   // mat under its feet and a light bar in each hand, accessory/trans_DDR_Mat.bin + Acc?Hand_LightBar.bin from
   // the disc; main.dol 0x8003c988 / 0x80107734, Dolphin 2026-11-17 set-up record +0x30 = 0x188)
@@ -3370,7 +3379,9 @@ let COURSE = null;                                  // the course being played: 
 // a song slot from the game's tables -> the song to play (a cut slot plays the song's SHORT version)
 // London EVOLVED's three songs (Ver.A / B / C, each its own chart and dance) are one entry in song select;
 // starting it picks one of the three at random (main.dol 0x8004be98: id 92 + 2 x (rand() % 3))
-function songVersion(song, v) { return v ? Object.assign({}, song, v, { versions: null, versionOf: song.slot }) : song; }
+// (the version keeps the song's own jacket and title: the Wii never shows which one was drawn - RESULTS shows the plain
+// London EVOLVED jacket after Ver.C, Wii 2026-11-19)
+function songVersion(song, v) { return v ? Object.assign({}, song, v, { versions: null, versionOf: song.slot, jacket: song.jacket, title: song.title, name: song.name }) : song; }
 // a song with several versions (London EVOLVED): pick one at random
 function pickVersion(song) {
   if (!song || !song.versions || !song.versions.length) return song;
@@ -5883,8 +5894,8 @@ function rainbowAt(t) { return `hsl(${(t * 120) % 360},100%,60%)`; }
 const DDR2_CHAR_NAMES = { '201': 'EMI', '202': 'DISCO', '203': 'RUBY', '204': 'YUNI', '205': 'RAGE', '206': 'Rena', '207': 'NAOKI', '208': 'jun', '209': 'U1' };
 // MY CHARACTER: the Wii's 3 x 3 pages (Wii footage): page 1 = RANDOM ALL / RANDOM girls / RANDOM boys,
 // Mii, EMI, DISCO, YUNI, RAGE, RUBY; page 2 = Rena, NAOKI, jun, U1, then empty slots. Locked dancers
-// show ???. DDR II PC has no Mii, so that slot can't be picked. Each dancer is a black box with the
-// name (no portraits, and no 3D dancer on the left).
+// show ???. Mii opens SELECT Mii CHARACTER (MiiSel) once the 'Mii Character' unlock is earned. Each
+// dancer is a black box with the name (no portraits, and no 3D dancer on the left).
 const MYCHAR_PAGES = [['random', 'randomF', 'randomM', 'mii', '201', '202', '204', '205', '203'], ['206', '207', '208', '209', null, null, null, null, null]];
 // HP4's SELECT CHARACTER (select_bin group 2): its 16 faces (/2/3/0/0: Rena, Chordia, Dyna, Bridget, Ceja, U1,
 // jun, NAOKI, U.G., Root, Harmony, Mii, Bossa, Nova, Hip, Hop, then RANDOM ALL / female / male) with the names
@@ -5903,10 +5914,15 @@ const MyChar = {
     const at = this.pages().findIndex(p => p.includes(S.ddr2Char));
     if (at >= 0) { this.page = at; this.cur = this.pages()[at].indexOf(S.ddr2Char); }
     if (!DDR2_CHARS) api('/api/ddr2chars').then(c => { DDR2_CHARS = c || []; }).catch(() => { DDR2_CHARS = []; });
+    this.outfitFor = null;
   },
   item(k) { return this.pages()[this.page][k]; },
+  // a DDR II dancer's outfits: OUTFIT 1 / OUTFIT 2 (Wii: picking DISCO opened these two buttons, Dolphin
+  // 2026-11-21); the second is open once the unlock table's points for it are earned
+  outfits(v) { const c = (DDR2_CHARS || []).find(x => x.id === v); return c ? c.outfits : []; },
+  outfitOpen(v, k) { return k < this.outfits(v).length && !ddr2CharLockedAt(+v - 1, k); },
   locked(v) { return /^\d+$/.test(v || '') && ddr2CharLockedAt(+v - 1, 0) > 0; },
-  usable(v) { return !!v && v !== 'mii' && !this.locked(v) && (!/^\d+$/.test(v) || !DDR2_CHARS || DDR2_CHARS.some(c => c.id === v)); },
+  usable(v) { return !!v && (v !== 'mii' || (!HP4 && miiLockedAt() === 0)) && !this.locked(v) && (!/^\d+$/.test(v) || !DDR2_CHARS || DDR2_CHARS.some(c => c.id === v)); },
   label(v) {
     if (!v) return '';
     if (v === 'random') return 'RANDOM ALL';
@@ -5918,12 +5934,24 @@ const MyChar = {
   },
   input(a, p) {
     if (!p) return;                                   // (key releases come here too: only presses move)
+    if (this.outfitFor) {                             // OUTFIT 1 / OUTFIT 2
+      const v = this.outfitFor;
+      if (/^P\d[UD]$/.test(a)) { const k = this.ocur ? 0 : 1; if (this.outfitOpen(v, k)) { this.ocur = k; sfx('SE_SYS_SELECT01'); } }
+      else if (a === 'START') {
+        sfx('SE_SYS_DECIDE01');
+        S.ddr2Char = v; S.ddr2Outfits = Object.assign({}, S.ddr2Outfits, { [v]: this.ocur }); saveSettings();
+        Promise.resolve().then(() => ddr2Dancer()).catch(() => {});
+        go(Select);
+      } else if (a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); this.outfitFor = null; }
+      return;
+    }
     const r = Math.floor(this.cur / 3), c = this.cur % 3, rows = HP4 ? 4 : 3, PG = this.pages();
     if (a === 'P1L' || a === 'P2L') {
-      if (c > 0) this.cur--; else if (this.page > 0) { this.page--; this.cur = r * 3 + 2; } else return;
+      // (DDR II: the pages go round - the Wii shows both page arrows on page 1)
+      if (c > 0) this.cur--; else if (this.page > 0 || !HP4) { this.page = (this.page + PG.length - 1) % PG.length; this.cur = r * 3 + 2; } else return;
       sfx('SE_SYS_SELECT01');
     } else if (a === 'P1R' || a === 'P2R') {
-      if (c < 2) this.cur++; else if (this.page < PG.length - 1) { this.page++; this.cur = r * 3; } else return;
+      if (c < 2) this.cur++; else if (this.page < PG.length - 1 || !HP4) { this.page = (this.page + 1) % PG.length; this.cur = r * 3; } else return;
       sfx('SE_SYS_SELECT01');
     } else if (a === 'P1U' || a === 'P2U') { if (r > 0) { this.cur -= 3; sfx('SE_SYS_SELECT01'); } }
     else if (a === 'P1D' || a === 'P2D') { if (r < rows - 1) { this.cur += 3; sfx('SE_SYS_SELECT01'); } }
@@ -5931,6 +5959,10 @@ const MyChar = {
       const v = this.item(this.cur);
       if (!this.usable(v)) { sfx('SE_SYS_ERROR'); return; }
       sfx('SE_SYS_DECIDE01');
+      if (v === 'mii') { go(MiiSrc); return; }        // (the Mii, its body and outfit are picked next)
+      if (!HP4 && /^\d+$/.test(v) && this.outfits(v).length) {
+        this.outfitFor = v; const o = (S.ddr2Outfits || {})[v] | 0; this.ocur = this.outfitOpen(v, o) ? o : 0; return;
+      }
       S.ddr2Char = v; saveSettings();
       Promise.resolve().then(() => ddr2Dancer()).catch(() => {});
       go(Select);
@@ -5966,38 +5998,393 @@ const MyChar = {
   },
   draw(t) {
     if (HP4) { if (this.drawHp4(t)) return; this.at = performance.now(); menuBackground(t); return; }   // (first visit: just the background while the disc's pictures load, not DDR II's screen for a moment)
+    // laid out as on the Wii (Dolphin screenshots 2026-11-21): the header with MY CHARACTER, the 3 x 3 board
+    // of portraits (select_bin /2/3/0/0) with the page arrows, the highlighted dancer dancing on the left and
+    // its name plate (/2/2/0/0) under it
     menuBackground(t);
-    // title bar
-    withMenuIn('title', () => {
-      g.fillStyle = '#1f6fd0'; g.fillRect(400, 10, 480, 64);
-      g.fillStyle = '#3b8ff0'; g.fillRect(406, 14, 468, 56);
-      text('MY CHARACTER', 640, 44, 34, '#fff', 'center');
-    });
-    // the grid: a blue panel, 3 x 3 boxes, the cursor's in an orange frame
-    const gx = 690, gy = 150, cs = 132, gap = 12, pw = 3 * cs + 4 * gap;
-    g.fillStyle = '#2a6fd0'; g.fillRect(gx - gap, gy - gap, pw, pw);
-    for (let k = 0; k < 9; k++) {
-      const v = this.item(k), x = gx + (k % 3) * (cs + gap), y = gy + Math.floor(k / 3) * (cs + gap);
-      if (!v) { g.fillStyle = '#b8c4cc'; g.fillRect(x, y, cs, cs); g.fillStyle = '#dfe6ea'; g.fillRect(x + 14, y + 14, cs - 28, cs - 28); continue; }
-      const rnd = v === 'random' || v === 'randomF' || v === 'randomM';
-      g.fillStyle = v === 'random' ? '#2bb7a4' : v === 'randomF' ? '#e86ab8' : v === 'randomM' ? '#2b7fe0' : v === 'mii' ? '#1a8a78' : '#000';
-      g.fillRect(x, y, cs, cs);
-      g.strokeStyle = '#fff'; g.lineWidth = 4; g.strokeRect(x + 2, y + 2, cs - 4, cs - 4);
-      const lb = this.label(v);
-      text(lb, x + cs / 2, y + cs / 2, fitSize(lb, rnd ? 20 : 24, cs - 16), v === 'mii' ? 'rgba(255,255,255,0.45)' : '#fff', 'center');
-      if (k === this.cur) { g.strokeStyle = '#ff6a10'; g.lineWidth = 8; g.strokeRect(x - 6, y - 6, cs + 12, cs + 12); }
+    const art = miiArt() ? MII_ART : {};
+    charHeader(art.titles && art.titles[0]);
+    const v = this.item(this.cur);
+    const dancerUrl = !v || /^random/.test(v) ? null : v === 'mii' ? (this.usable('mii') ? (miiDancerUrl() || miiUrl(82, [0], (MII_GUEST0 || {}).hex)) : null)
+      : this.locked(v) ? null : '/api/ddr2char/' + v + '/' + (this.outfits(v)[this.outfitFor === v ? this.ocur : 0] || 1);
+    if (v === 'mii' && !MII_GUEST0 && !this.guestAsked) { this.guestAsked = true; api('/api/miis').then(r => { MII_GUEST0 = ((r && r.miis) || []).find(m => m.src === 'guest') || null; }).catch(() => {}); }
+    menuDancer(dancerUrl, 380, 540, 410, t);
+    const ICON = { random: 16, randomF: 17, randomM: 18, mii: 11, '201': 1, '202': 0, '203': 2, '204': 4, '205': 3, '206': 5, '207': 8, '208': 7, '209': 6 };
+    if (this.outfitFor) {
+      // OUTFIT 1 / OUTFIT 2 (/2/6/0/0 #0 / #1, the chosen one in the orange frame /2/6/0/1 #0; Wii screenshot:
+      // centres (779, 224) and (779, 372)); a locked outfit greyed
+      [224, 372].forEach((y, k) => {
+        if (k === this.ocur) drawC(art.btnHi && art.btnHi[0], 779, y, 1.45);
+        g.save(); if (!this.outfitOpen(v, k)) g.filter = 'grayscale(0.7) brightness(0.6)';
+        drawC(art.btn && art.btn[k], 779, y, 1.33 * (k === this.ocur ? 1.08 : 1)); g.restore();
+      });
+      const lk = ddr2CharLockedAt(+v - 1, 1);
+      if (lk && this.outfits(v).length > 1) text(lk.toLocaleString() + ' DDR POINTS', 779, 450, 18, '#0d3770', 'center');
+      charPlate(art.names && art.names[ICON[v]], this.label(v));
+      keyHints('Arrows: select    Enter: confirm    Esc: back');
+      return;
     }
-    // the pink page arrows either side of the panel
-    const ay = gy + pw / 2 - gap;
-    const tri = (x, dir) => { g.fillStyle = '#ff28c8'; g.beginPath(); g.moveTo(x, ay); g.lineTo(x - dir * 34, ay - 30); g.lineTo(x - dir * 34, ay + 30); g.closePath(); g.fill(); };
-    if (this.page > 0) tri(gx - gap - 54, -1);
-    if (this.page < MYCHAR_PAGES.length - 1) tri(gx - gap + pw + 54, 1);
-    // the name box (bottom left)
-    const v = this.item(this.cur), nm = this.label(v);
-    g.fillStyle = '#1f6fd0'; g.fillRect(290, 560, 260, 70); g.fillStyle = '#3b8ff0'; g.fillRect(296, 566, 248, 58);
-    if (nm) text(nm, 420, 596, fitSize(nm, 30, 230), '#fff', 'center');
-    // the buttons
-    text('Enter CONFIRM    Esc BACK    Arrows SELECT', 1240, 690, 18, '#fff', 'right');
+    // (the 3 x 3 board, /2/4/0/1 #1, fills only 4-278 x 3-270 of its 282 x 360 picture)
+    if (art.board && art.board[1]) g.drawImage(art.board[1], 4, 3, 274, 267, 582, 162, 411, 400);
+    charBoard([582, 162, 993, 562], 3, this.cur, k => {
+      const w = this.item(k);
+      if (!w) return [art.icons && art.icons[21], 1];
+      if (this.locked(w)) return [art.icons && art.icons[22], 1];
+      return [art.icons && art.icons[ICON[w]], w === 'mii' && !this.usable(w) ? 0.4 : 1];
+    }, t, null);
+    const pa = 0.8 + 0.2 * Math.sin(t * 5);
+    drawC(art.arrow, 535, 360, 1.0, null, true, pa); drawC(art.arrow, 1027, 360, 1.0, null, false, pa);   // (both, as on the Wii)
+    charPlate(v ? art.names && art.names[this.locked(v) ? 21 : ICON[v]] : null, v ? this.label(v) : '');
+    keyHints('Arrows: select    Enter: confirm    Esc: back');
+  },
+};
+
+// ---------------------------------------------------------------- Miis (DDR II's Mii dancers)
+// DDR II can dance as one of your Miis: its head (the Wii's own face library, RFL, from the disc's
+// mii/RFLRes01.arc - mii.py) on one of the disc's Mii bodies. The Miis are read, never changed, from
+// Dolphin's Wii NAND (shared2/menu/FaceLib/RFL_DB.dat), from Mii files (.mii, 74 bytes) in the game's
+// "Miis" folder, and the face library's six Guests (server /api/miis).
+// The screens follow the real game (Dolphin screenshots 2026-11-21, DDR II USA, GUEST): MY CHARACTER > Mii
+// asks Wii / GUEST (Wii greyed when the Wii has no Miis), then SELECT Mii CHARACTER (5 x 2 Miis on the
+// board, the page "1/1" in its top band), then SELECT BODY (a 3 x 4 board: plain boy, plain girl, A boy /
+// A girl, B boy, B girl / C boy, C girl, - / D, E, -). A plain body is taken at once; the others open
+// OUTFIT 1-4 + CONFIRM, each OUTFIT a 3 x 4 board of numbered pieces (A: OUTFIT 1 = jackets 1-10,
+// OUTFIT 2 = T-shirts 1-10 - seen; the piece changes on the dancer as the cursor moves, and B keeps it).
+// Each OUTFIT is one part of the body (material colour tags 11.. / 21.. / 31.. / 41..), dressed from that
+// outfit file's pictures (Dolphin: jacket 4 / 5 changed only the jacket).
+// The bodies: sound/stream/character CHR81-90 = game ids 80-89 (unlock table type 2 rows [points, 2, id,
+// 4, outfit]): 80 / 81 plain boy / girl, 82 / 83 A, 86 / 87 B, 88 / 89 C, 84 D, 85 E.
+// parts: how many OUTFITs (the body's material tag groups, read from the files); kinds: the piece
+// pictures per OUTFIT (select_bin /2/3/0/0: 33 jackets 1-10, 43 shirts 1-24, 67 trousers 1-24, 91 shoes 1-10
+// - A's first two seen on the Wii, the rest assumed from the counts)
+const MII_BODIES = [
+  { id: 80, icon: 23, parts: 0, sex: 0 }, { id: 81, icon: 24, parts: 0, sex: 1 }, { id: 82, icon: 25, parts: 4, sex: 0 },
+  { id: 83, icon: 26, parts: 4, sex: 1 }, { id: 86, icon: 27, parts: 4, sex: 0 }, { id: 87, icon: 28, parts: 4, sex: 1 },
+  { id: 88, icon: 29, parts: 2, sex: 0, kinds: [43, 67] }, { id: 89, icon: 30, parts: 2, sex: 1, kinds: [43, 67] }, null,
+  { id: 84, icon: 31, parts: 4, sex: 0 }, { id: 85, icon: 32, parts: 4, sex: 0 }, null];
+const MII_KINDS = [33, 43, 67, 91];
+function miiBodyOf(id) { return MII_BODIES.find(b => b && b.id === id) || MII_BODIES[0]; }
+// the DDR POINTS the Mii itself still needs (the unlock table's type 7 row); 0 = open
+function miiLockedAt() {
+  if (S.unlocks !== 'on') return 0;
+  const r = (DISC_UNLOCKS || []).find(x => x[1] === 7);
+  return r && SAVE.points < r[0] ? r[0] : 0;
+}
+// how many outfit files a Mii body has on the disc (its CHRnnvv.bin)
+function miiOutfits(id) {
+  const c = (DDR2_CHARS || []).find(x => +x.id === id + 1);
+  return c ? c.outfits.length : 0;
+}
+// a Mii dancer's model: body id, the outfit file (0-based) for each OUTFIT part, the Mii's 74 bytes
+function miiUrl(body, parts, hex) {
+  const n = miiOutfits(body);
+  if (!n || !/^[0-9a-f]{148}$/i.test(hex || '')) return null;
+  const bd = miiBodyOf(body);
+  const ps = [...Array(Math.max(1, bd.parts)).keys()].map(k => {
+    let o = Math.max(0, Math.min(n - 1, (parts || [])[k] | 0));
+    if (ddr2CharLockedAt(body, o)) o = 0;
+    return o;
+  });
+  if (ddr2CharLockedAt(body, ps[0])) return null;
+  return '/api/ddr2char/' + (body + 1) + '/' + (ps[0] + 1) + '?mii=' + hex.toLowerCase() + (bd.parts > 1 ? '&parts=' + ps.map(o => o + 1).join(',') : '');
+}
+// the chosen Mii's dancer model (null if it can't be used)
+function miiDancerUrl() {
+  if (HP4 || S.ddr2Char !== 'mii' || miiLockedAt()) return null;
+  return miiUrl(MII_BODIES.some(b => b && b.id === S.miiBody) ? S.miiBody : 80, S.miiParts || [S.miiOutfit | 0], S.miiHex);
+}
+// a Mii's picture (the server draws it as the Wii's RFLMakeIcon does), loaded once
+const MII_ICONS = new Map();
+let MII_GUEST0 = null;      // (MY CHARACTER shows a Guest Mii on body A when no Mii is picked yet, as the Wii did)
+function miiIcon(hex) {
+  if (!hex) return null;
+  let im = MII_ICONS.get(hex);
+  if (!im) { im = new Image(); im.src = '/api/miiicon?mii=' + hex; MII_ICONS.set(hex, im); }
+  return im.complete && im.naturalWidth ? im : null;
+}
+// the character screens' pictures (select_bin): /2/2 names, plate, header, titles; /2/3 icons + frame;
+// /2/4 board; /2/6 buttons + their orange frames; /2/10-12 the Mii board, tile and frame, page arrow
+const MII_ART = { ok: false, loading: null };
+function miiArt() {
+  if (!MII_ART.loading && A.tplOf) MII_ART.loading = (async () => {
+    const one = p => A.tplOf('sel', p).then(x => x.map(q => q.canvas)).catch(() => []);
+    const P = ['/2/2/0/0', '/2/2/0/1', '/2/2/0/2', '/2/2/0/3', '/2/3/0/0', '/2/3/0/1', '/2/4/0/1', '/2/6/0/0', '/2/6/0/1',
+               '/2/10/0/2', '/2/10/0/4', '/2/11/0/0', '/2/11/0/1', '/2/12/0/2', '/2/2/0/4'];
+    const [names, plate, head, titles, icons, frame, board, btn, btnHi, arrow, miiTitle, tile, tileHi, miiBoard, pgArrow] = await Promise.all(P.map(one));
+    Object.assign(MII_ART, { names, plate: plate[0], head: head[0], titles, icons, frame: frame[0], board, btn, btnHi,
+      arrow: arrow[0] || pgArrow[0], miiTitle: miiTitle[0], tile: tile[0], tileHi: tileHi[0], miiBoard: miiBoard[0], ok: true });
+  })();
+  return MII_ART.ok;
+}
+// a picture centred at (x, y), scaled s (sy), optionally mirrored, with alpha a
+function drawC(im, x, y, s, sy, flip, a = 1) {
+  if (!im) return;
+  const w = im.width * s, h = im.height * (sy || s);
+  g.save(); g.globalAlpha *= a; g.translate(x, y); if (flip) g.scale(-1, 1); g.drawImage(im, -w / 2, -h / 2, w, h); g.restore();
+}
+// the screens' common parts (canvas pixels, measured on the Wii screenshots): the header panel with the
+// title, the name plate bottom left, the button hints
+function charHeader(title) {
+  const art = MII_ART;
+  // (placed to match the Wii screenshot: the panel's bottom edge at y 78, the title's middle at y 52)
+  if (art.head) g.drawImage(art.head, 335 - 2 * 1.42, 78 - 77 * 1.5 + 15, 430 * 1.42, 80 * 1.5);
+  if (title) drawC(title, 640, 49, 1.5);
+}
+function charPlate(nameIm, fallback) {
+  const art = MII_ART;
+  if (art.plate) g.drawImage(art.plate, 399 - 73 * 1.5, 605 - 52 * 1.5, 146 * 1.5, 80 * 1.5);
+  if (nameIm) drawC(nameIm, 399, 605, 1.5);
+  else if (fallback) text(fallback, 399, 605, fitSize(fallback, 26, 180), '#fff', 'center');
+}
+// a dancer model shown dancing on the menu: wanted url (loaded after a short pause, so running the cursor
+// over the board doesn't build every model), drawn with its feet at (cx, feet), figure about h tall
+const MENU_MODEL = { want: null, at: 0, ch: null, chLoading: false };
+function menuDancer(url, cx, feet, h, t, flash) {
+  if (!window.Dancer3D) return false;
+  const M_ = MENU_MODEL;
+  if (!M_.ch && !M_.chLoading && SONGS.length) {
+    M_.chLoading = true;
+    const so = SONGS.find(x => !x.custom);
+    if (so) api('/api/dance/' + danceNo(so)).then(d => { M_.ch = d ? Dancer3D.prepare(d, 7) : null; }).catch(() => {});
+  }
+  if (url !== M_.want) { M_.want = url; M_.at = performance.now(); }
+  if (url && Dancer3D.customFor !== url && performance.now() - M_.at > 300) Dancer3D.useModel(url);
+  if (!url || !M_.ch || Dancer3D.customFor !== url || !Dancer3D.custom) return false;
+  let cv = null;
+  try { cv = Dancer3D.render(M_.ch, 8 + (t * 2) % 120, 1e6, { face: { val: 0 }, secs: t, flash }); } catch (e) { return false; }
+  if (!cv) return false;
+  // (the default camera puts the figure's feet at about 0.91 of the picture, the figure about 0.59 high)
+  const ch = h / 0.59, cw = ch * cv.width / cv.height;
+  g.drawImage(cv, cx - cw / 2, feet - 0.91 * ch, cw, ch);
+  return true;
+}
+// a 3 x n board of icons (MY CHARACTER 3 x 3, SELECT BODY and the pieces 3 x 4): rect, items -> picture,
+// the chosen one bigger in the orange frame
+function charBoard(rect, rows, cur, iconOf, t, boardIm) {
+  const art = MII_ART, [x0, y0, x1, y1] = rect;
+  if (boardIm) g.drawImage(boardIm, x0, y0, x1 - x0, y1 - y0);
+  const px = 127, py = rows === 3 ? 127 : 127;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  for (let k = 0; k < 3 * rows; k++) {
+    if (k === cur) continue;
+    const x = cx + (k % 3 - 1) * px, y = cy + (Math.floor(k / 3) - (rows - 1) / 2) * py;
+    const [im, a] = iconOf(k);
+    drawC(im, x, y, 1.25, null, false, a);
+  }
+  if (cur >= 0 && cur < 3 * rows) {
+    const x = cx + (cur % 3 - 1) * px, y = cy + (Math.floor(cur / 3) - (rows - 1) / 2) * py, [im, a] = iconOf(cur);
+    drawC(art.tileHi, x, y, 1.5); drawC(im, x, y, 1.55, null, false, a);
+  }
+}
+
+// MY CHARACTER > Mii: Wii (the Miis on the Wii) or GUEST (the face library's six)
+const MiiSrc = {
+  bgm: 'MU_BGM_FREE',
+  enter() {
+    this.list = null; this.cur = 1;
+    api('/api/miis').then(r => {
+      this.list = (r && r.miis) || []; this.faceLib = !!(r && r.faceLib);
+      this.cur = this.mine().length ? 0 : 1;
+    }).catch(() => { this.list = []; });
+    miiArt();
+  },
+  mine() { return (this.list || []).filter(m => m.src !== 'guest'); },
+  input(a, p) {
+    if (!p || !this.list) return;
+    if (a === 'P1U' || a === 'P2U' || a === 'P1D' || a === 'P2D') {
+      const k = this.cur ? 0 : 1;
+      if (k === 0 && !this.mine().length) return;
+      this.cur = k; sfx('SE_SYS_SELECT01');
+    } else if (a === 'START') {
+      if (!this.faceLib) { sfx('SE_SYS_ERROR'); return; }
+      sfx('SE_SYS_DECIDE01');
+      go(MiiSel.with(this.cur === 0 ? this.mine() : this.list.filter(m => m.src === 'guest')));
+    } else if (a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); go(MyChar); }
+  },
+  draw(t) {
+    menuBackground(t);
+    const art = miiArt() ? MII_ART : {};
+    charHeader(art.titles && art.titles[0]);
+    menuDancer(miiDancerUrl() || miiUrl(82, [0], (S.miiHex && /^[0-9a-f]{148}$/i.test(S.miiHex)) ? S.miiHex : ((this.list || [])[0] || {}).hex), 380, 540, 410, t);
+    charPlate(art.names && art.names[11], 'Mii');
+    // the two buttons (the chosen one in its orange frame; Wii greyed with no Miis on it)
+    const mine = this.mine().length > 0;
+    [[3, 290], [4, 437]].forEach(([b, y], k) => {
+      if (k === this.cur) drawC(art.btnHi && art.btnHi[0], 780, y, 1.45);
+      g.save(); if (k === 0 && !mine) g.filter = 'grayscale(0.7) brightness(0.6)';
+      drawC(art.btn && art.btn[b], 780, y, 1.33 * (k === this.cur ? 1.08 : 1));
+      g.restore();
+    });
+    if (this.list && !mine) text('No Miis found in Dolphin\'s Wii system or the "Miis" folder.', 780, 520, 17, '#0d3770', 'center', 'normal');
+    if (this.list && !this.faceLib) text('The disc\'s Mii face library (mii/RFLRes01.arc) wasn\'t found.', 780, 545, 17, '#a00', 'center', 'normal');
+    keyHints('Arrows: select    Enter: confirm    Esc: back');
+  },
+};
+
+// SELECT Mii CHARACTER: the Miis, 10 to a page (5 x 2 on the board), the page in the board's top band
+const MiiSel = {
+  bgm: 'MU_BGM_FREE',
+  with(list) { this.list = list || []; return this; },
+  enter() {
+    this.page = 0; this.cur = 0;
+    const k = this.list.findIndex(m => m.hex === S.miiHex);
+    if (k >= 0) { this.page = Math.floor(k / 10); this.cur = k % 10; }
+    miiArt();
+  },
+  pages() { return Math.max(1, Math.ceil(this.list.length / 10)); },
+  item(k) { return this.list[this.page * 10 + k] || null; },
+  input(a, p) {
+    if (!p) return;
+    const r = Math.floor(this.cur / 5), c = this.cur % 5;
+    const move = k => { if (this.item(k)) { this.cur = k; sfx('SE_SYS_SELECT01'); } };
+    if (a === 'P1L' || a === 'P2L') {
+      if (c > 0) move(this.cur - 1);
+      else if (this.page > 0) { this.page--; this.cur = r * 5 + 4; sfx('SE_SYS_SELECT01'); }
+    } else if (a === 'P1R' || a === 'P2R') {
+      if (c < 4 && this.item(this.cur + 1)) move(this.cur + 1);
+      else if (this.page < this.pages() - 1) { this.page++; this.cur = r * 5; while (this.cur > 0 && !this.item(this.cur)) this.cur--; sfx('SE_SYS_SELECT01'); }
+    } else if (a === 'P1U' || a === 'P2U') { if (r > 0) move(this.cur - 5); }
+    else if (a === 'P1D' || a === 'P2D') { if (r < 1) move(this.cur + 5); }
+    else if (a === 'START') {
+      const m = this.item(this.cur);
+      if (!m) { sfx('SE_SYS_ERROR'); return; }
+      sfx('SE_SYS_DECIDE01'); go(MiiBody.with(m));
+    } else if (a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); go(MiiSrc); }
+  },
+  draw(t) {
+    menuBackground(t);
+    const art = miiArt() ? MII_ART : {};
+    charHeader(art.miiTitle);
+    // the board (450 x 231 at 1.5: 303-975 x 145-487) and the page in its band
+    if (art.miiBoard) g.drawImage(art.miiBoard, 303, 145, 672, 342);
+    g.save(); g.font = 'italic 900 34px Arial Black, Arial, sans-serif'; g.textAlign = 'right'; g.textBaseline = 'middle';
+    const pg = (this.page + 1) + ' / ' + this.pages();
+    g.lineWidth = 6; g.strokeStyle = '#123'; g.strokeText(pg, 955, 176); g.fillStyle = '#fff'; g.fillText(pg, 955, 176); g.restore();
+    const at = k => [385 + (k % 5) * 127, 280 + Math.floor(k / 5) * 127];
+    const tileAt = (k, s) => {
+      const [x, y] = at(k), m = this.item(k);
+      g.save(); if (!m) g.filter = 'grayscale(0.8) brightness(0.55)';
+      drawC(art.tile, x, y, 1.27 * s); g.restore();
+      const ic = m && miiIcon(m.hex);
+      if (ic) g.drawImage(ic, x - 58 * s, y - 60 * s, 116 * s, 116 * s);
+    };
+    for (let k = 0; k < 10; k++) if (k !== this.cur) tileAt(k, 1);
+    const [hx, hy] = at(this.cur);
+    drawC(art.tileHi, hx, hy, 1.55); tileAt(this.cur, 1.18);
+    if (this.page > 0) drawC(art.arrow, 255, 316, 1.2, null, true, 0.8 + 0.2 * Math.sin(t * 5));
+    if (this.page < this.pages() - 1) drawC(art.arrow, 1023, 316, 1.2, null, false, 0.8 + 0.2 * Math.sin(t * 5));
+    charPlate(art.names && art.names[11], 'Mii');
+    keyHints('Arrows: select    Enter: confirm    Esc: back');
+  },
+};
+
+// SELECT BODY: the bodies on a 3 x 4 board with the Mii dancing on the left; then OUTFIT 1-4 + CONFIRM,
+// each OUTFIT its own 3 x 4 board of pieces
+const MiiBody = {
+  bgm: 'MU_BGM_FREE',
+  with(m) { this.mii = m; return this; },
+  enter() {
+    const same = S.miiHex === (this.mii && this.mii.hex);
+    const k = MII_BODIES.findIndex(b => b && b.id === S.miiBody);
+    this.cur = same && k >= 0 ? k : 2;                // (the Wii started on A boy)
+    this.body = MII_BODIES[this.cur];
+    this.parts = same && Array.isArray(S.miiParts) ? S.miiParts.slice() : [0, 0, 0, 0];
+    this.step = 'body'; this.ocur = 0; this.pcur = 0; this.ppage = 0; this.kind = 0;
+    if (!DDR2_CHARS) api('/api/ddr2chars').then(c => { DDR2_CHARS = c || []; }).catch(() => { DDR2_CHARS = []; });
+    miiArt();
+  },
+  open(b) { return !!b && miiOutfits(b.id) > 0 && !ddr2CharLockedAt(b.id, 0); },
+  url() { const b = this.step === 'body' ? MII_BODIES[this.cur] || this.body : this.body; return b && this.mii ? miiUrl(b.id, this.parts, this.mii.hex) : null; },
+  finish() {
+    sfx('SE_SYS_DECIDE01');
+    Object.assign(S, { ddr2Char: 'mii', miiHex: this.mii.hex, miiName: this.mii.name, miiBody: this.body.id, miiParts: this.parts.slice(), miiOutfit: this.parts[0] | 0 });
+    saveSettings();
+    Promise.resolve().then(() => ddr2Dancer()).catch(() => {});
+    go(Select);
+  },
+  input(a, p) {
+    if (!p) return;
+    const d = { P1L: [-1, 0], P2L: [-1, 0], P1R: [1, 0], P2R: [1, 0], P1U: [0, -1], P2U: [0, -1], P1D: [0, 1], P2D: [0, 1] }[a];
+    if (this.step === 'body') {
+      if (d) {
+        const c = this.cur % 3 + d[0], r = Math.floor(this.cur / 3) + d[1];
+        if (c >= 0 && c < 3 && r >= 0 && r < 4 && MII_BODIES[r * 3 + c]) { this.cur = r * 3 + c; if (this.body !== MII_BODIES[this.cur]) this.parts = [0, 0, 0, 0]; sfx('SE_SYS_SELECT01'); }
+      } else if (a === 'START') {
+        const b = MII_BODIES[this.cur];
+        if (!this.open(b)) { sfx('SE_SYS_ERROR'); return; }
+        this.body = b;
+        if (!b.parts) { this.parts = [0, 0, 0, 0]; this.finish(); return; }   // (a plain body is taken at once)
+        sfx('SE_SYS_DECIDE01'); this.step = 'outfit'; this.ocur = 0;
+      } else if (a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); go(MiiSel); }
+      return;
+    }
+    if (this.step === 'outfit') {
+      // OUTFIT 1 2 / 3 4 / CONFIRM (C bodies: OUTFIT 1 2 / CONFIRM)
+      const n = this.body.parts, rows = n > 2 ? 2 : 1, conf = n;
+      if (d) {
+        if (this.ocur === conf) { if (d[1] < 0) { this.ocur = n - 2; sfx('SE_SYS_SELECT01'); } return; }
+        const c = this.ocur % 2 + d[0], r = Math.floor(this.ocur / 2) + d[1];
+        if (r >= rows) { this.ocur = conf; sfx('SE_SYS_SELECT01'); }
+        else if (c >= 0 && c < 2 && r >= 0) { this.ocur = r * 2 + c; sfx('SE_SYS_SELECT01'); }
+      } else if (a === 'START') {
+        if (this.ocur === conf) { this.finish(); return; }
+        sfx('SE_SYS_DECIDE01'); this.step = 'piece'; this.kind = this.ocur;
+        const o = this.parts[this.kind] | 0; this.ppage = Math.floor(o / 12); this.pcur = o % 12;
+      } else if (a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); this.step = 'body'; }
+      return;
+    }
+    // a piece board: 12 to a page; the dancer wears what the cursor is on, and B keeps it
+    const n = miiOutfits(this.body.id), pages = Math.ceil(n / 12);
+    const ok = i => i < n && !ddr2CharLockedAt(this.body.id, i);
+    if (d) {
+      const c = this.pcur % 3 + d[0], r = Math.floor(this.pcur / 3) + d[1];
+      let pg = this.ppage, k;
+      if (c < 0 && pg > 0) { pg--; k = Math.floor(this.pcur / 3) * 3 + 2; }
+      else if (c > 2 && pg < pages - 1) { pg++; k = Math.floor(this.pcur / 3) * 3; }
+      else if (c >= 0 && c < 3 && r >= 0 && r < 4) k = r * 3 + c;
+      if (k === undefined || !ok(pg * 12 + k)) return;
+      this.ppage = pg; this.pcur = k; this.parts[this.kind] = pg * 12 + k; sfx('SE_SYS_SELECT01');
+    } else if (a === 'START' || a === 'BACK') { sfx(a === 'START' ? 'SE_SYS_DECIDE01' : 'SE_SYS_WINDOWOUT'); this.step = 'outfit'; }
+  },
+  draw(t) {
+    menuBackground(t);
+    const art = miiArt() ? MII_ART : {};
+    charHeader(art.titles && art.titles[1]);
+    // (on the OUTFIT buttons the part that button changes flashes on the dancer)
+    const fl = this.step === 'outfit' && this.ocur < this.body.parts ? { part: this.ocur + 1, amt: 0.45 * (0.5 + 0.5 * Math.sin(t * 9)) } : null;
+    menuDancer(this.url(), 410, 655, 500, t, fl);
+    const rect = [582, 110, 993, 640];
+    if (this.step === 'body') {
+      charBoard(rect, 4, this.cur, k => {
+        const b = MII_BODIES[k];
+        if (!b) return [art.icons && art.icons[21], 1];
+        return [art.icons && art.icons[b.icon], this.open(b) ? 1 : 0.35];
+      }, t, art.board && art.board[0]);
+    } else if (this.step === 'outfit') {
+      // OUTFIT 1-4 (150 x 80 at 1.32) and CONFIRM (200 x 80): measured centres
+      const n = this.body.parts, spots = n > 2 ? [[661, 224], [901, 224], [661, 374], [901, 374]] : [[661, 300], [901, 300]];
+      const confY = n > 2 ? 524 : 450;
+      spots.slice(0, n).forEach(([x, y], k) => {
+        if (k === this.ocur) { drawC(art.btnHi && art.btnHi[1], x, y, 1.4); drawC(art.btn && art.btn[5 + k], x, y, 1.42); }
+        else drawC(art.btn && art.btn[5 + k], x, y, 1.32);
+      });
+      if (this.ocur === n) { drawC(art.btnHi && art.btnHi[0], 780, confY, 1.42); drawC(art.btn && art.btn[9], 780, confY, 1.42); }
+      else drawC(art.btn && art.btn[9], 780, confY, 1.33);
+    } else {
+      const n = miiOutfits(this.body.id), kinds = this.body.kinds || MII_KINDS, base = kinds[this.kind] || 33;
+      const pages = Math.ceil(n / 12);
+      charBoard(rect, 4, this.pcur, k => {
+        const i = this.ppage * 12 + k;
+        if (i >= n) return [art.icons && art.icons[21], 1];
+        if (ddr2CharLockedAt(this.body.id, i)) return [art.icons && art.icons[22], 1];
+        return [art.icons && art.icons[base + i], 1];
+      }, t, art.board && art.board[0]);
+      if (this.ppage > 0) drawC(art.arrow, 545, 375, 1.2, null, true, 0.8 + 0.2 * Math.sin(t * 5));
+      if (this.ppage < pages - 1) drawC(art.arrow, 1030, 375, 1.2, null, false, 0.8 + 0.2 * Math.sin(t * 5));
+      const lk = ddr2CharLockedAt(this.body.id, this.ppage * 12 + this.pcur);
+      if (lk) text(lk.toLocaleString() + ' DDR POINTS', 787, 660, 18, '#0d3770', 'center');
+    }
+    keyHints('Arrows: select    Enter: confirm    Esc: back');
   },
 };
 
@@ -6488,7 +6875,7 @@ const Select = {
   drawStage(t) {
     const k = clamp((performance.now() - this.stageAt) / 150), P = A.pop || {};
     const pw = 624, ph = 468, px = W / 2 - pw / 2, py = H / 2 - ph / 2 + 6;
-    const mmss = v => { const n = Math.round(v || 0); return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); };
+    const mmss = v => { const sv = this.song && this.song(); if (sv && sv.versions && sv.versions.length) return '??:??'; const n = Math.round(v || 0); return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); };
     const pulse = 0.75 + 0.25 * Math.sin(t * 7);
     g.fillStyle = `rgba(0,10,40,${0.7 * k})`; g.fillRect(0, 0, W, H);
     g.save();
@@ -6639,7 +7026,7 @@ const Select = {
     else { text(song.name.slice(0, 40), 640, song.artist ? 50 : 66, Math.min(28, Math.round(440 / (0.56 * Math.max(1, song.name.slice(0, 40).length)))), '#fff', 'center'); if (song.artist) text(song.artist.slice(0, 44), 640, 86, 18, '#dff', 'center'); }
     const bpm = song.bpm[0] === song.bpm[1] ? '' + song.bpm[0] : song.bpm[0] + '-' + song.bpm[1];
     const len = Math.round(song.length);
-    const info = [[A.img.bpmLabel, 'BPM', bpm, 58], [A.img.lenLabel, 'Song Length', song.random ? '??:??' : song.folderTile ? '--:--' : `${String(Math.floor(len / 60)).padStart(2, '0')}:${String(len % 60).padStart(2, '0')}`, 92]];
+    const info = [[A.img.bpmLabel, 'BPM', bpm, 58], [A.img.lenLabel, 'Song Length', song.random || (song.versions && song.versions.length) ? '??:??' : song.folderTile ? '--:--' : `${String(Math.floor(len / 60)).padStart(2, '0')}:${String(len % 60).padStart(2, '0')}`, 92]];
     for (const [im, label, val, y] of info) {
       const sc = 1.32, x = 820;
       if (im) g.drawImage(im, x, y - 11 * sc, im.width * sc, im.height * sc);
@@ -6703,8 +7090,9 @@ const Select = {
         if (rec.fc && A.img.crowns) blit(A.img.crowns[rec.fc === 5 ? 2 : rec.fc === 4 ? 0 : rec.fc === 3 ? 1 : 3], x + 4, y + h / 2 - 6, 0.7);
         if (!blit(A.img.gradeSmall && A.img.gradeSmall[gi], x + 44, y + h / 2 + 2, 0.8)) text(rec.grade, x + 40, y + h / 2, 20, '#4fb4ff', 'center');
       }
-      if (on) {
-        // the game's difficulty cursor (select_diff_arr) at the row's right end
+      // the game's difficulty cursor (select_diff_arr) at the row's right end: only while the difficulty is
+      // being picked (Wii: none while you browse the songs - the blue '1' there is the remote's pointer)
+      if (on && (this.stage === 'diff' || this.stage === 'go')) {
         if (A.img.pointer) g.drawImage(A.img.pointer, LX(576.5) - 27 * 1.5, y + h / 2 - 19 * 1.5, 54 * 1.5, 38 * 1.5);
         else { g.strokeStyle = `rgba(255,255,255,${0.75 + 0.25 * Math.sin(t * 8)})`; g.lineWidth = 4; g.strokeRect(x - 3, y - 2, w + 6, h + 4); }
         if (P2) text('1P', x - 20, y + h / 2, 14, '#fff', 'center');
@@ -7639,15 +8027,16 @@ const OPT_TOP = [
       helps: { default: 'Automatic camera settings based on mode.', front: 'Only fixed front cameras are used.', all: 'All cameras are used.' } },
     { name: 'COMBO PERFORMANCE', key: 'comboPerf', values: ['50', 'off'], fmt: v => v === 'off' ? 'OFF' : '50',
       helps: { '50': 'Sets the combo performance to 50.', off: 'Setting to "OFF" eliminates the lighting show.' } },
-    { name: 'DDR II DANCER', key: 'ddr2Char', values: ['random', 'randomF', 'randomM', '201', '202', '203', '204', '205', '206', '207', '208', '209', 'builtin'], fmt: v => v === 'random' ? 'RANDOM ALL' : v === 'randomF' ? 'RANDOM (GIRLS)' : v === 'randomM' ? 'RANDOM (BOYS)' : v === 'builtin' ? 'BUILT-IN' : (DDR2_CHAR_NAMES[v] || 'DANCER ' + (+v - 200)) + (ddr2CharLockedAt(+v - 1, 0) ? ' (LOCKED)' : ''),
-      skip: v => /^\d+$/.test(v) && ddr2CharLockedAt(+v - 1, 0) > 0 },
+    { name: 'DDR II DANCER', key: 'ddr2Char', values: ['random', 'randomF', 'randomM', 'mii', '201', '202', '203', '204', '205', '206', '207', '208', '209', 'builtin'], fmt: v => v === 'random' ? 'RANDOM ALL' : v === 'randomF' ? 'RANDOM (GIRLS)' : v === 'randomM' ? 'RANDOM (BOYS)' : v === 'builtin' ? 'BUILT-IN' : v === 'mii' ? 'Mii' + (S.miiName ? ' (' + S.miiName + ')' : '') : (DDR2_CHAR_NAMES[v] || 'DANCER ' + (+v - 200)) + (ddr2CharLockedAt(+v - 1, 0) ? ' (LOCKED)' : ''),
+      // (Mii: the one last picked in MY CHARACTER > Mii; not offered before one is picked or while locked)
+      skip: v => (/^\d+$/.test(v) && ddr2CharLockedAt(+v - 1, 0) > 0) || (v === 'mii' && (!S.miiHex || miiLockedAt() > 0)) },
     { name: 'DANCER LIGHTING', key: 'dancerLight', values: ['pc', 'game'], fmt: v => v === 'game' ? 'GAME STYLE' : 'DDR II PC',
       helps: { pc: 'The built-in dancer keeps DDR II PC\'s own lighting.', game: 'The built-in dancer is lit the game\'s way: the stage\'s colour, the light from the camera and the shading ramp.' } },
     { name: 'DANCER MODEL', action: 'model' },
     { name: 'HOTTEST PARTY DANCER', key: 'hpDancer', values: ['001', '002', '003', '004', '005', '006', '007', '008', 'off'], fmt: v => HP_DANCERS[v] || v },
     { name: 'HOTTEST PARTY STAGE', key: 'hpStage', values: ['random'].concat(Array.from({ length: 41 }, (_, i) => String(i + 1)), [false]), fmt: v => v === 'random' || v === 'song' ? 'RANDOM' : v === false ? 'OFF' : 'STAGE ' + v },
   ] },
-  { big: 3, name: 'CREDIT', help: 'View game credits.', action: () => go(Credits) },
+  { big: 3, name: 'CREDIT', help: 'View game credits.', action: () => go(Credits.with()) },
   { big: 8, name: 'GRAPHIC', help: 'Change the look of the game screen.', rows: [
     { small: 10, name: 'MARVELOUS', key: 'marvelous', values: ON_OFF, fmt: yesNo, help: 'Enable MARVELOUS judgment ranking.' },
     { small: 22, name: 'TIMING', key: 'offset', step: 5, min: -500, max: 500, fmt: v => (v > 0 ? '+' : '') + v + ' ms', help: 'Modify arrow timing. (Raise it if the arrows feel early.)' },
@@ -7974,13 +8363,16 @@ const Options = {
 // ---- CREDIT: the game's staff roll (text_eng.bin), scrolling up; Up/Down to scroll by hand, Enter/Esc to leave
 const Credits = {
   bgm: 'MU_BGM_FREE',
-  lines: null, y: 0, at: 0, hand: 0,
+  lines: null, y: 0, at: 0, hand: 0, auto: false,
+  // opts.auto: the staff roll after clearing London EVOLVED - runs once to the end, A doesn't cut it short, then the song list
+  with(opts = {}) { this.auto = !!opts.auto; return this; },
   enter() {
     this.at = performance.now(); this.hand = 0;
     if (!this.lines) api('/api/ddr2credits').then(r => { this.lines = (r && r.lines) || []; }).catch(() => { this.lines = []; });
   },
   input(a, p) {
     if (!p) return;
+    if (this.auto) return;
     if (/^P[1-4]U$/.test(a)) this.hand -= 160;
     else if (/^P[1-4]D$/.test(a)) this.hand += 160;
     else if (a === 'START' || a === 'BACK') { sfx('SE_SYS_WINDOWOUT'); go(Options); }
@@ -7998,7 +8390,9 @@ const Credits = {
     const LH = 30, GAP = 174;
     let total = 0, prev = null;
     for (const [k, s2] of L) { if (k !== 'name' && prev === 'name') total += GAP - LH; total += LH * s2.split('\n').length; prev = k; }
-    const scroll = ((performance.now() - this.at) / 1000 * 60 + this.hand) % (total + H);
+    const raw = (performance.now() - this.at) / 1000 * 60 + this.hand;
+    if (this.auto && raw > total + H) { this.auto = false; go(Select); sfx('VO_NAR_SELECTMUSIC'); return; }
+    const scroll = raw % (total + H);
     let y = H - scroll; prev = null;
     for (const [k, s2] of L) {
       if (k !== 'name' && prev === 'name') y += GAP - LH;
@@ -9011,6 +9405,16 @@ class Dancer {
     this.holding = this.holding.filter(n => n.holding);
   }
   // lanes, arrows, flashes, judgment and combo. x0 = left edge of the lanes
+  // how much of a blue foot lane l's step zone shows now (0-1), counted from this dancer's first frame on screen
+  feetFor(l, lanes) {
+    if (HP4 || !A.img.stepFoot) return 0;
+    if (this.feet0 === undefined) this.feet0 = performance.now();
+    const s = (performance.now() - this.feet0) / 1000;
+    if (s > 3.9) return 0;
+    const d = l % 4, lr = d === 0 || d === 3;
+    const on = u => u < 0 ? 0 : u < 1.0 ? +lr : u < 1.7 ? +!lr : u < 2.4 ? +lr : u < 3.1 ? +!lr : u < 3.8 ? 1 : 0;
+    return (on(s - 0.05) + on(s + 0.05)) / 2;
+  }
   draw(t, x0, lw, ry, held, ended) {
     const lanes = this.lanes, size = lw - 6, o = this.o;
     // SCROLL REVERSE: the step zone at the bottom and the arrows coming down. Everything is worked out
@@ -9085,6 +9489,15 @@ class Dancer {
         g.globalAlpha = 1;
       } else if (grey) {
         const sc = down ? 0.9 : 1;
+        // (DDR II, Wii recordings 2026-11-19: as the song screen comes up the step zone shows blue feet (GAME_CMN /9/1)
+        // instead of arrows - LEFT + RIGHT for about 1 s, then UP + DOWN, LEFT + RIGHT, UP + DOWN for 0.7 s each, all four
+        // for 0.7 s, then the arrows; each change a ~0.1 s cross-fade. Timed by eye from the recordings, not traced.)
+        const ft = this.feetFor(l, lanes);
+        if (ft > 0) {
+          g.globalAlpha = 1 - ft; g.drawImage(grey, x - size * sc / 2, yr - size * sc / 2, size * sc, size * sc);
+          g.globalAlpha = ft; g.drawImage(A.img.stepFoot, x - size / 2, yr - size / 2, size, size); g.globalAlpha = 1;
+          continue;
+        }
         g.globalAlpha = 1; g.drawImage(grey, x - size * sc / 2, yr - size * sc / 2, size * sc, size * sc);
         g.globalCompositeOperation = 'lighter';
         g.globalAlpha = down ? 0.55 : 0.35 * (1 - beat);
@@ -9097,7 +9510,7 @@ class Dancer {
     // the real game: the combo covers arrows passing through it); COMBO puts the combo under the arrows,
     // JUDGMENT ONLY the judgment, ALL both. They stay in the same place either way.
     const jAge = this.judgeText ? t - this.judgeText.at : 9;
-    const evalOn = !ended && o.evaluation !== false && !(this.drawOwner !== undefined && this.judgeText && this.judgeText.owner !== this.drawOwner), jp = o.judgePos || 'normal';
+    const evalOn = (!ended || (!HP4 && ended.kind === 'failed')) && o.evaluation !== false && !(this.drawOwner !== undefined && this.judgeText && this.judgeText.owner !== this.drawOwner), jp = o.judgePos || 'normal';
     const cx = x0 + lanes * lw / 2, cy = rev ? Y(Play.hpBoard ? 362 : 352) - 70 : Play.hpBoard ? 362 : 352;
     const drawJudge = (cy) => {
       // DDR II: its own pictures, static (no zoom or fade seen in 20 traced frames), 0.6 x lane/64 scale,
@@ -10252,7 +10665,12 @@ const Play = {
     // (held BACK quits: a lesson goes back to SELECT LESSON, everything else to the song list)
     if (this.quitHeld && performance.now() - this.quitHeld > 800) { go(this.mode === 'lesson' ? LessonSel : Select); return; }
     // the song stops when every player has failed, or after the last step
-    if (!this.ended && this.ps.filter(p => p.com === undefined && !p.remote).every(p => p.failed && t - p.failAt > 0.2)) { this.ended = { kind: 'failed', at: t }; this.fadeOut(); }
+    // (DDR II, the user's Dolphin recording 2026-11-19 18-48-29.mp4 - Rocket EXPERT, no steps: TRY AGAIN comes up the
+    // moment the gauge empties; the song, its video and the arrows go on at full volume, and 4.1 s later the screen
+    // cuts (no fade) to the next screen. Hottest Party: FAILED, the music fading.)
+    const fails = this.ps.filter(p => p.com === undefined && !p.remote);
+    if (!this.ended && !HP4 && fails.length && fails.every(p => p.failed && isFinite(p.failAt))) this.ended = { kind: 'failed', at: Math.max(...fails.map(p => p.failAt || t)), faded: true };
+    if (!this.ended && fails.every(p => p.failed && t - p.failAt > 0.2)) { this.ended = { kind: 'failed', at: t }; this.fadeOut(); }
     if (!this.ended && t > this.lastNoteT + 0.6) {
       this.ended = { kind: 'finish', at: t };
       if (this.ps.some(p => !p.failed) && !this.view) this.crowd('end');
@@ -10266,7 +10684,7 @@ const Play = {
       const again = Play.with(this.song, this.charts.map(c => Object.assign({}, c)), this.music, this.dance);
       again.stage = this.stage; again.train.again = true; go(again); return;
     }
-    if ((this.ended && t - this.ended.at > 3.6) || t > this.endT + 1) { if (DEMO.on) return endDemo(); go(Results.with(this)); }
+    if ((this.ended && t - this.ended.at > (!HP4 && this.ended.kind === 'failed' ? 4.1 : 3.6)) || t > this.endT + 1) { if (DEMO.on) return endDemo(); go(Results.with(this)); }
   },
   // The combo performance, each frame (main.dol 0x800fcdc8). Per player: the opening run (+0x5832c)
   // counts good steps until the first break and then stays put; the depth (+52) is 1 for the option's
@@ -10647,7 +11065,7 @@ const Play = {
         // (DDR II: a play that can't fail - a lesson - ending with the gauge empty says TRY AGAIN: Wii 2026-11-18, STEP
         // LESSON 1 / 6 with no steps hit)
         const tryAg = !HP4 && !p.failed && p.o.gauge === 'no fail' && p.life <= 1 && A.img.tryAgain;
-        const kind = p.failed ? 'failed' : tryAg ? 'try' : fc ? 'fc' : 'finish';
+        const kind = p.failed ? (!HP4 && A.img.tryAgain ? 'try' : 'failed') : tryAg ? 'try' : fc ? 'fc' : 'finish';
         const im = kind === 'try' ? A.img.tryAgain : kind === 'failed' ? (A.img.failed || A.img.tryAgain)
                  : kind === 'fc' ? (fc === 5 ? A.img.fullComboB : fc === 4 ? A.img.fullComboY : fc === 3 ? A.img.fullComboG : A.img.fullComboP || A.img.fullComboG)
                  : (!HP4 && A.img.finished) || A.img.finishY;      // (DDR II: a clear without a full combo says FINISHED, green, centred - Wii screenshot 2026-11-18)
@@ -10665,12 +11083,44 @@ const Play = {
           // Wii 2026-11-18 with the all-GOOD autoplay)
           const top = fc === 5 ? A.img.fullComboB : fc === 4 ? A.img.fullComboY : fc === 2 && A.img.fullComboP ? A.img.fullComboP : A.img.fullComboG;
           const bot = fc === 5 ? A.img.finishB : fc === 4 ? A.img.finishY : fc === 2 && A.img.finishP ? A.img.finishP : A.img.finishG;
-          const f = Math.floor((t - this.ended.at) * 60), m = this.two ? 0.78 / 1.25 : 1;
-          const e = f < 21 ? READY_D2[f] : [1.0, Math.max(1.0, 1.2 - 0.0015 * (f - 21))];
+          // (how they come in - the user's Dolphin recording 2026-11-19 19-03-00.mp4, Rocket BASIC by the all-MARVELOUS
+          // autoplay: the pair tilts in as ONE piece, round the middle of the screen, on HERE WE GO!!'s curve at half its
+          // speed - biggest about 16 frames in, nearly level about 24 frames in (the same as TRY AGAIN); then the flare.
+          // Measured by eye from the frames, not traced; the right half of the screen was hidden in that recording.)
+          const f = Math.floor((t - this.ended.at) * 60), m = this.two ? 0.78 / 1.25 : 1, h2 = Math.floor(f / 2);
+          const e = h2 < HWG_D2.length ? HWG_D2[h2] : [Math.max(1, 1.0049 - 0.0001 * (h2 - 14)), Math.max(1, 1.2225 - 0.00375 * (h2 - 14))];
           const lx = x0 + width / 2;
           if (A.img.fcGlow) { g.save(); g.globalAlpha = 153 / 255; g.drawImage(A.img.fcGlow, lx - 128 * m * 1.5, 0, 256 * m * 1.5, H); g.restore(); }
           if (A.img.fcSwirl) { g.save(); g.globalAlpha = 102 / 255; g.globalCompositeOperation = 'lighter'; g.drawImage(A.img.fcSwirl, lx - 128 * m * 1.5, H / 2 - 768 * m, 256 * m * 1.5, 1536 * m); g.restore(); }
-          for (const [im2, v] of [[top, -40], [bot, 38]]) drawBannerD2(im2, e[0], e[1], 1, -1, bx, H / 2 + v * 1.5 * m, m);   // (tilted, not stretched: see d2Tilt)
+          const [e1, th] = d2Tilt(e[0], e[1], top.width / top.height);     // (tilted, not stretched: see d2Tilt)
+          g.save(); g.translate(bx, H / 2); g.rotate(-th);
+          for (const [im2, v] of [[top, -40], [bot, 38]]) {
+            const w = im2.width * 1.5 * m * e1, h = im2.height * 1.5 * m * e1;
+            g.drawImage(im2, -w / 2, v * 1.5 * m * e1 - h / 2, w, h);
+          }
+          // the flare (GAME_CMN /0/0/10, fifo_ddr2_fullcombo.dff: a 256 x 128 flare crossing the top banner, x 87 -> 176
+          // units, shrinking, and wide copies on both banners - 1882 x 184 growing to 2562 x 234 units, alpha 227 -> 8
+          // over about 50 frames), added on; in the recording it starts as the pair lands (about 24 frames in). Its exact
+          // start and the moving flare's path are by eye.
+          const fl = A.img.endFlare, ff = f - 24;
+          if (fl && ff >= 0 && ff < 50) {
+            const u = ff / 50, U = 1.5 * m;
+            g.globalCompositeOperation = 'lighter';
+            g.globalAlpha = (227 - 219 * u) / 255;
+            for (const v of [-40, 38]) { const w = (1882 + 680 * u) * U, h = (184 + 50 * u) * U; g.drawImage(fl, -w / 2, v * U - h / 2, w, h); }
+            if (ff < 20) { const k = ff / 20, w = 256 * (1 - 0.5 * k) * U, h = 128 * (1 - 0.5 * k) * U; g.globalAlpha = 1 - k * 0.5; g.drawImage(fl, (87 + 89 * k) * U - w / 2, -40 * U - h / 2, w, h); }
+            g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+          }
+          g.restore();
+        } else if (!HP4 && kind === 'try' && A.img.tryAgain && !hb) {
+          // DDR II's TRY AGAIN (the user's Dolphin recording 2026-11-19 18-48-29.mp4, a failed song): centred, it comes in
+          // tilted and growing like HERE WE GO!! but at half its speed (each of HWG_D2's steps held 2 frames longer: the
+          // first tilted ~20 degrees, biggest ~1.8 x about 16-19 frames in, level at 1.0 about 28 frames in - MEASURED by
+          // eye from the frames, not traced), then stays while the song goes on
+          const f = Math.max(0, Math.floor((t - this.ended.at) * 60)), h2 = Math.floor(f / 2), m = this.two ? 0.78 / 1.25 : 1;
+          const e = h2 < HWG_D2.length ? HWG_D2[h2] : [Math.max(1, 1.0049 - 0.0001 * (h2 - 14)), Math.max(1, 1.2225 - 0.00375 * (h2 - 14))];
+          const tim = A.img.tryAgain, [e1, th] = d2Tilt(e[0], e[1], tim.width / tim.height), w = tim.width * 1.43 * m * e1, h = tim.height * 1.43 * m * e1;   // (1.43 px a texel: its width on the Wii, 446 of 1280 - measured)
+          g.save(); g.translate(bx, H / 2); g.rotate(-th); g.drawImage(tim, -w / 2, -h / 2, w, h); g.restore();
         } else if (!HP4 && kind === 'finish' && A.img.finished && !hb) {
           // DDR II's FINISHED (the user's 60 fps Dolphin recording 2026-11-15_20-53-11.mp4, 223.4 s on): it comes in
           // tilted and growing like HERE WE GO!!, lands level at 1.0 (the picture 1:1 in 854 x 480 units, centred);
@@ -10697,7 +11147,7 @@ const Play = {
           g.restore();
         } else
         if (!blit(im, bx, H / 2, sc, k)) text(label, bx, H / 2, this.two ? 40 : 64, '#ffd23c', 'center');
-      } else if (p.failed) blit(A.img.failed, bx, H / 2, this.two ? 0.75 : 1.2);
+      } else if (p.failed && HP4) blit(A.img.failed, bx, H / 2, this.two ? 0.75 : 1.2);
     });
     // banners
     this.drawOpening(t);
@@ -10863,10 +11313,14 @@ const Results = {
       MC.totals = this.ps.map(p => p.combo); go(Select); return;
     }
     const q = (this.awards || []).filter(Boolean);      // each player with user data gets their points card
-    const after = q.length ? Points.with(q[0], q.slice(1)) : Select;
     const mine = this.ps.filter(p => !p.remote && p.com === undefined);
     const ws = this.play && this.play.mode === 'free' && !this.play.team && !BATTLE && mine.length >= 1 && mine.length <= 2 && !DEMO.on ? mccAfterSong(this.ps) : [];
-    go(ws.length ? MCCWin.with(ws, after) : after);
+    // (the Wii rolls the staff roll after the first London EVOLVED clear; left out on the PC at the user's wish,
+    // 2026-11-19 - CREDIT in OPTIONS still shows it)
+    const end = Select;
+    const afterMcc = ws.length ? MCCWin.with(ws, end) : end;
+    if (!HP4) go(q.length ? Points.with(q[0], q.slice(1), { post: true, then: afterMcc }) : afterMcc);
+    else { const after = q.length ? Points.with(q[0], q.slice(1)) : Select; go(ws.length ? MCCWin.with(ws, after) : after); }
   },
   // records, play points and challenge-task bonus into the player's own data (guests keep nothing)
   award(p) {
@@ -10883,9 +11337,14 @@ const Results = {
     const r = { failed: p.failed, life: p.life, maxCombo: p.maxCombo, grade: p.gr };
     const gi = GRADE_ORDER.indexOf(p.gr);
     const play = p.failed || gi < 0 ? 0 : PLAY_POINTS[p.slot][gi];
-    const ct = ctTask(prof);
+    // (once every DDR POINTS unlock is reached there is no challenge task any more - no CHALLENGE TASK card, no bonus,
+    // no NEXT CHALLENGE TASK: the user, on the Wii 2026-11-19; the task only steps while there is something to unlock,
+    // 0x800e77d8. DDR II only - Hottest Party keeps its own rules.)
+    const doneAll = !HP4 && !nextUnlock(prof.points);
+    const ct = doneAll ? null : ctTask(prof);
     let tasks, taskSong = null;
-    if (ct) {
+    if (doneAll) tasks = [];
+    else if (ct) {
       // the game's challenge task: only a cleared play of the right song counts
       const x = { level: p.slot, gauge: Math.floor((p.life || 0) / 10), maxCombo: p.maxCombo || 0, fc: (p.fc || 0) > 0,
                   rank: ['E', 'D', 'C', 'B', 'A', 'AA', 'AAA'].indexOf(p.gr) };
@@ -10913,7 +11372,7 @@ const Results = {
       // play in the Wii dump, though that play gave 2,000 - the points before this play)
       ctStep(prof, before, prof.points);
       const nt = ctTask(prof);
-      if (nt) next = { rows: nt.rows.map(k => ({ label: k.label, pts: k.pts })), song: nt.any ? null : songForSlot(nt.songId + 1) || null };
+      if (nt && (HP4 || nextUnlock(prof.points))) next = { rows: nt.rows.map(k => ({ label: k.label, pts: k.pts })), song: nt.any ? null : songForSlot(nt.songId + 1) || null };
     }
     // what the new total unlocks (player 1's points decide the song list; shown only when unlocking is on)
     const unlocked = p.idx === 0 && S.unlocks === 'on' ? unlockedBetween(before, prof.points).filter(u => u.songs.length) : [];
@@ -10921,9 +11380,19 @@ const Results = {
   },
   enter() {
     if (!this.ps || !this.ps.length) { go(Select); return; }
+    // (DDR II, Wii 2026-11-19 recordings: after a song the CHALLENGE TASK card comes FIRST (its tasks stamped CLEARED! /
+    // TRY AGAIN), then RESULTS, then the NEXT CHALLENGE TASK card and the MAX COMBO CHALLENGE window. So the awards
+    // are worked out once, on the first entry, and RESULTS waits behind the task card.)
+    if (this.awardedFor !== this.play) {
+      this.awardedFor = this.play;
+      for (const p of this.ps) { p.gr = p.grade(); p.fc = p.fullCombo(); p.newRecord = false; }
+      this.awards = this.ps.map(p => this.award(p));
+      writeSave();
+      const q = this.awards.filter(a => a && a.tasks.length);
+      if (!HP4 && q.length && this.play && this.play.mode === 'free' && !DEMO.on) { go(Points.with(q[0], q.slice(1), { pre: true })); return; }
+    }
     this.t0 = performance.now();
     this.gradeShown = false; this.info = false;
-    for (const p of this.ps) { p.gr = p.grade(); p.fc = p.fullCombo(); p.newRecord = false; }
     this.rd = null; this.rfx = this.rfx && this.rfx.fx ? Object.assign(this.rfx, { t0: null, two: false, last: 0 }) : null;
     // (DDR II: no results dancer after a boss song - Valkyrie dimension seen on the Wii 2026-11-18 (CHALLENGE and
     // BEGINNER); VANESSA on the same green video stage did show its dancer, so it's the song, not the stage. The
@@ -10936,8 +11405,6 @@ const Results = {
       HP4_MENUMOT.then(d => { if (scene === this && d) this.rd = { data: d, phase: 0, t0: performance.now() }; });
     }
     sfx('SE_RES_RESULTAPP');
-    this.awards = this.ps.map(p => this.award(p));
-    writeSave();
   },
   update() {
     const el = (performance.now() - this.t0) / 1000;
@@ -11391,15 +11858,33 @@ const Results = {
 // DDR points: the challenge task card, then any songs it unlocked
 const Points = {
   bgm: 'MU_BGM_FREE',
-  with(a, rest = []) { this.a = a; this.rest = rest; return this; },
+  // opts.pre: only the task card, before RESULTS; opts.post: the NEXT CHALLENGE TASK card and unlocks after it, then opts.then
+  with(a, rest = [], opts = {}) { this.a = a; this.rest = rest; this.opts = opts; return this; },
   enter() {
     if (!this.a) { go(Select); return; }
-    this.t0 = performance.now(); this.page = 0; this.nextShown = false;
-    this.a.tasks.forEach((k, i) => { if (k.done) setTimeout(() => { if (scene === this && this.page === 0) sfx('SE_RES_CLEAR01'); }, 500 + i * 300); });
+    const o = this.opts || {};
+    this.t0 = performance.now(); this.page = 0; this.nextShown = !!o.post && !!this.a.next;
+    if (o.post && !this.a.next && !this.a.unlocked.length) { this.leave2(); return; }
+    if (o.post && !this.a.next) this.page = 1;
+    if (!o.post) this.a.tasks.forEach((k, i) => { if (k.done) setTimeout(() => { if (scene === this && this.page === 0) sfx('SE_RES_CLEAR01'); }, 500 + i * 300); });
+  },
+  // where the cards lead: the next player's cards, RESULTS (before it), or opts.then / the song list
+  leave2() {
+    const o = this.opts || {};
+    if (o.pre) { if (this.rest.length) go(Points.with(this.rest[0], this.rest.slice(1), o)); else go(Results); return; }
+    const card = this.a && (this.a.next ? this.a.next.song : this.a.taskSong);
+    if (card && card.slot) this.jump = card.slot;
+    if (this.rest.length) { const j = this.jump; go(Points.with(this.rest[0], this.rest.slice(1), o)); this.jump = this.jump || j; return; }
+    if (this.jump) { S.lastSlot = this.jump; saveSettings(); Select.inFolder = null; Select.query = ''; Select.favOnly = false; }
+    this.jump = null;
+    const then = o.then || Select; go(then); if (then === Select) sfx('VO_NAR_SELECTMUSIC');
   },
   input(a, p) {
     if (!p || (a !== 'START' && a !== 'BACK')) return;
     sfx('SE_SYS_DECIDE01');
+    const o = this.opts || {};
+    if (o.pre) { this.leave2(); return; }
+    if (o.post) { if (a === 'START' && this.page < this.a.unlocked.length) { this.page++; this.t0 = performance.now(); sfx('SE_DDR_FULLCOMBO'); return; } this.leave2(); return; }
     // after the task card: the NEXT CHALLENGE TASK (once the task has stepped on)
     if (a === 'START' && this.page === 0 && this.a.next && !this.nextShown) { this.nextShown = true; this.t0 = performance.now(); return; }
     if (a === 'START' && this.page < this.a.unlocked.length) { this.page++; this.t0 = performance.now(); sfx('SE_DDR_FULLCOMBO'); return; }
@@ -11516,7 +12001,7 @@ const Lights = {
     const key = bits.join(',');
     if (key === this.last) return;
     this.last = key;
-    fetch('/api/lights', { method: 'POST', body: JSON.stringify({ bits }), keepalive: true }).catch(() => {});
+    fetch('/api/lights', { method: 'POST', headers: { 'X-DDR-Token': DDR_TOKEN }, body: JSON.stringify({ bits }), keepalive: true }).catch(() => {});
   },
 };
 

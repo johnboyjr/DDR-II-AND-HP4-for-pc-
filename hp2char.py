@@ -118,10 +118,64 @@ def _skinned(model, rows):
     return False
 
 
-def character(base, outfit=None, acc=()):
+# DDR II's Mii head on a Mii body: main.dol 0x80057d14 puts the face library's model (RFL) at the body's
+# 'mii_head' joint, moved (0, -0.2, 0) and scaled 0.05 x 0.7 = 0.035 (0x802715dc-f0 x 0x802e84d0; the
+# head object's matrix is built by 0x80188828 as joint x translate x scale x rotate, rotation 0)
+MII_HEAD_MOVE = (0.0, -0.2, 0.0)
+MII_HEAD_SCALE = 0.05 * 0.7
+
+
+def _mii_head(heads, mj, place, materials, meshes, bitmaps, attrs):
+    """heads = [parts per face picture] from mii.head (index 0 normal, then smile, blink): adds the head's
+    meshes, held rigidly by joint mj; the face picture switches like DDR II's own heads (material face slot 3)"""
+    import mii as MII
+    parts = heads[0]
+    tx, ty, tz = MII_HEAD_MOVE
+    k = MII_HEAD_SCALE
+
+    def bitmap(rgba, name):
+        bitmaps.append(dict(name=name, w=rgba.w, h=rgba.h, png=base64.b64encode(MII.png(rgba)).decode()))
+        attrs.append(dict(bitmap=len(bitmaps) - 1, wrapS=1, wrapT=1))
+        return len(attrs) - 1
+    for pi_, pt in enumerate(parts):
+        m = dict(color=[255, 255, 255], vtx=1, alpha=1.0, flags=0, attrs=[], cut=None)
+        if pt['color']:
+            m['rgba'] = [c / 255.0 for c in pt['color']] + [1.0]
+        if pt['tex'] is not None:
+            m['attrs'] = [bitmap(pt['tex'], 'mii_' + pt['name'])]
+        if pt['blend']:
+            m['blend'] = True
+        m['cull'] = pt['cull']
+        if pt['name'] == 'mask' and len(heads) > 1:     # face slot 3: [normal, smile, blink] (0x80188a04)
+            m['face'] = 3
+            m['faceAttrs'] = [m['attrs'][0]] + [bitmap(h[pi_]['tex'], 'mii_mask%d' % e) for e, h in enumerate(heads[1:], 1)]
+        materials.append(m)
+        mat = len(materials) - 1
+        P, N, U = [], [], []
+        for tri in pt['tris']:
+            for v in (tri[0], tri[2], tri[1]):          # (GX's front faces turn the other way from glTF's)
+                x, y, z = pt['pos'][v]
+                P.append(S.mat_mul_point(place, (x * k + tx, y * k + ty, z * k + tz)))
+                N.append(S.mat_mul_dir(place, pt['nrm'][v]))
+                U.extend(pt['uv'][v] if pt['uv'] else (0.0, 0.0))
+        if not P:
+            continue
+        idx = list(range(len(P)))
+        vj, vwt = pack4([[(mj, 1.0)]] * len(P))
+        meshes.append(dict(obj=mj, nv=len(P), nn=len(N), pos=b64f([c for p in P for c in p]), nrm=b64f([c for n in N for c in n]),
+                           groups=[dict(mat=mat, n=len(idx), pi=u16b64(idx), ni=u16b64(idx), uv=b64f(U),
+                                        col=base64.b64encode(bytes([255] * 4 * len(idx))).decode())],
+                           vj=u16b64(vj), vw=b64f(vwt), nj=u16b64(vj), nw=b64f(vwt)))
+
+
+def character(base, outfit=None, acc=(), mii=None, parts=None):
     """CHRxy0.bin (+ an outfit CHRxyN.bin) -> {objects, meshes, materials, attrs, bitmaps}
     acc: accessory files to wear, (joint name, path) - files/accessory/<joint>_<name>.bin, a WII container of
-    a ZMB model and its TPL, held rigidly by the same-named joint (HP4 0x80107734, table 0x802543e8)"""
+    a ZMB model and its TPL, held rigidly by the same-named joint (HP4 0x80107734, table 0x802543e8)
+    mii: a Mii for the body's 'mii_head' joint: dict(heads=[parts] per face picture (mii.head), skin=(r, g, b),
+    fav=(r, g, b)) - the skin and favourite colours also go on the body's tagged materials
+    parts: {group 1-4: outfit file} - a Mii body's materials tagged 10 x group + n take their pictures from
+    that file instead (DDR II's OUTFIT 1-4: Dolphin 2026-11-21, a new jacket changed only the jacket)"""
     d = open(base, 'rb').read()
     es = wii_entries(d)
     body = Zmb(d[es[0][1]:es[0][1] + es[0][2]])
@@ -149,6 +203,16 @@ def character(base, outfit=None, acc=()):
     bitmaps = _bitmaps(tpls[0] if tpls else None, body.textures())
     nb = len(bitmaps)
     bitmaps += _bitmaps(tpls[1] if len(tpls) > 1 else None, head.textures() if head else [])
+    # (a Mii body's parts dressed from other outfit files: their body pictures, after the rest)
+    part_base = {}
+    for grp, pf in (parts or {}).items():
+        try:
+            pt = _tpls(pf)
+        except Exception:
+            pt = []
+        if pt:
+            part_base[grp] = len(bitmaps)
+            bitmaps += _bitmaps(pt[0], body.textures())
     attrs = [dict(bitmap=i, wrapS=1, wrapT=1) for i in range(len(bitmaps))]
     materials = []
 
@@ -164,7 +228,9 @@ def character(base, outfit=None, acc=()):
             nt, to = struct.unpack_from('>II', Z, r + 0x14)
             # +0x15 face slot (1 eyes, 2 mouth; 0x80057d14 swaps its texture at run time), +0x17 how many
             # of the texture list it cycles through (7 eyes, 3 mouths)
-            rec = dict(flags=list(Z[r + 0x10:r + 0x14]), slot=Z[r + 0x15], count=Z[r + 0x17],
+            # (+0x28 high half: a colour tag - 0x8015d224 gives every material whose tag is k + 1 the colour
+            # set for k: on a Mii body, tag 2 = the Mii's skin, tag 3 = its favourite colour, 0x80057d14)
+            rec = dict(flags=list(Z[r + 0x10:r + 0x14]), slot=Z[r + 0x15], count=Z[r + 0x17], tag=struct.unpack_from('>h', Z, r + 0x28)[0] if r + 0x2a <= len(Z) else 0,
                        tex=[model.u32(to + 4 * k) for k in range(min(nt, 8))] if 0 < to < len(Z) else [])
             rec['base'] = rec['tex'][:1]
             # HP4 nests the eyes / mouth one level down: +0x28 = how many layer records, +0x2c = where; a layer
@@ -208,6 +274,8 @@ def character(base, outfit=None, acc=()):
     def mat_for(model, mid, base_tex):
         ms = mtab[id(model)]
         mt = ms[mid] if mid < len(ms) else None
+        if model is body and mt and part_base and mt.get('tag', 0) >= 10 and mt['tag'] // 10 in part_base:
+            base_tex = part_base[mt['tag'] // 10]
         tex = mt['tex'][0] if mt and mt['tex'] else None
         ok = lambda t: t is not None and base_tex + t < len(bitmaps) and bitmaps[base_tex + t]['png']
         a = base_tex + tex if ok(tex) else None
@@ -215,6 +283,11 @@ def character(base, outfit=None, acc=()):
         face = mt['slot'] if mt and model is head and mt['slot'] in (1, 2) else 0
         m = dict(color=[255, 255, 255], vtx=1, alpha=1.0, flags=0, attrs=[a] if a is not None else [],
                  cut=0.5 if (b2 == 3 or face) else None)
+        if mt and model is body and mt.get('tag', 0) >= 10:   # (a Mii body's part: OUTFIT 1-4 = tag 1x-4x)
+            m['part'] = mt['tag'] // 10
+        if mt and mii and mt.get('tag') in (2, 3):     # a Mii body's skin / favourite-colour parts
+            col = mii['skin'] if mt['tag'] == 2 else mii['fav']
+            m['rgba'] = [c / 255.0 for c in col] + [1.0]
         # (0x8015e3d8: blend byte +0x12, low 7 bits 1 = added (src alpha, one) with no z-write - the dance mat's
         # arrow panels; 3 = ordinary alpha blending)
         if mt and not face and (b2 & 0x7f) == 1:
@@ -287,6 +360,8 @@ def character(base, outfit=None, acc=()):
         for n in head.nodes():
             if n['meshes']:
                 build(head, mj, n['meshes'], nb, rigid_joint=mj, place=S.mat4mul(n['m'], wm(mj)))
+    if mii and 'mii_head' in index:
+        _mii_head(mii['heads'], index['mii_head'], wm(index['mii_head']), materials, meshes, bitmaps, attrs)
     for joint, am, ab in accs:
         j = index.get(joint)
         if j is None:

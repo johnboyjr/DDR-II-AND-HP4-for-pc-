@@ -107,6 +107,17 @@ OPTIONS
   PC SETTINGS: JUDGMENT, EARLY / LATE, GHOST, TEAM TURN, and the PC-only settings below.
 
 
+MIIS
+  MY CHARACTER > Mii (once the 'Mii Character' unlock is earned, or with unlocks open): pick one of
+  your Miis, then a Mii BODY (plain, A-E, boy and girl) and an outfit; locked outfits show ??? and
+  the DDR POINTS they still need. The Mii dances with its own face, made by the Wii's face library
+  on your disc. Your Miis are only read, never changed, from:
+    - Dolphin's Wii system (Documents\Dolphin Emulator\Wii\shared2\menu\FaceLib\RFL_DB.dat,
+      also OneDrive\Documents or AppData) - make them in the Mii Channel in Dolphin;
+    - Wii Mii files (.mii, 74 bytes) put in a "Miis" folder next to this README;
+    - and the six Guest Miis built into the face library, always there.
+
+
 PC EXTRAS (not in the real DDR II)
   BATTLE CPU      DANCE MODE, 1 player, SELECT STYLE. Pick LEVEL 1-4 and dance against a computer on
                   the 2-player screen (no second dancer). The opponent plays the way Hottest Party 2's
@@ -125,6 +136,9 @@ PC EXTRAS (not in the real DDR II)
                   Each game judges its own steps, so lag never touches your timing. Both players need
                   DDR II PC and their own disc. Some strict networks can't connect directly; a free
                   virtual-LAN app (Tailscale, ZeroTier) fixes that.
+                  WARNING: the codes contain your internet (IP) address - that is how the two games
+                  find each other. Only swap them with someone you know and trust, and never post them
+                  publicly (Discord servers, forums, streams).
   GHOST           PC SETTINGS > GHOST. Your best play of a chart dances beside you on the player 2
                   side, step for step (DANCE MODE, 1 player). Plays are recorded automatically.
   EARLY / LATE    PC SETTINGS > EARLY / LATE. Small EARLY (blue) / LATE (pink) under every judgment

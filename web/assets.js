@@ -370,7 +370,8 @@ const A = { ready: false, tpl: {}, img: {}, sfx: {} };
     await Promise.all(bn.map(async (k, i) => { if (k) A.img[k] = await img('cmn', '/0/0/' + (i + 1), 0); }));
     // (DDR II's full-combo ending - fifo_ddr2_fullcombo.dff: the flare /0/0/10, the white glow over the lanes /7/1/0/0
     // (64 x 480) and the swirl /7/4/0/1)
-    A.img.endFlare = await img('cmn', '/0/0/10', 0); A.img.fcGlow = await img('cmn', '/7/1/0/0', 0); A.img.fcSwirl = await img('cmn', '/7/4/0/1', 0);
+    A.img.endFlare = await img('cmn', '/0/0/10', 0); A.img.stepFoot = await img('cmn', '/9', 1);   // (/9/1: the blue foot shown on the step zone as a song starts)
+     A.img.fcGlow = await img('cmn', '/7/1/0/0', 0); A.img.fcSwirl = await img('cmn', '/7/4/0/1', 0);
     A.img.comboBreak = await img('cmn', '/1/0/0', 0);
     // footprints (where to stand): DDR II's SSQ_CMN /9 pictures 1 / 2 (blue / red). HP4's /9 holds other things
     // there (0 / 1 the Wii Remote and Nunchuk plates, 2 'The A or B Button is being pressed.', 4 AUTO-PLAY) and

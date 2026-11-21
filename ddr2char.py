@@ -100,9 +100,11 @@ ACCESSORIES = [('AccRHand', 'wii_con'), ('AccLHand', 'wii_con'), ('mii_head', 's
                ('AccRHand', 'HP3C_03'), ('AccRHand', 'HP4C_03')]
 
 
-def glb(files, cid, outfit, acc=0):
+def glb(files, cid, outfit, acc=0, mii=None, parts=None):
     """CHR<cid>00 + CHR<cid><outfit> -> binary glTF bytes (or None); acc = HP4 accessory mask (CHOREOGRAPH and
-    DANCE VIEW: 0x188 = the dance mat + a light bar in each hand, 0x8003c988)"""
+    DANCE VIEW: 0x188 = the dance mat + a light bar in each hand, 0x8003c988); mii = a Mii's 74 bytes, whose
+    head goes on the body's 'mii_head' joint (the Mii bodies CHR81-90); parts = the outfit file (1-based) for
+    each of a Mii body's parts - OUTFIT 1-4 on the Wii, the materials tagged 1x / 2x / 3x / 4x"""
     base = _path(files, 'CHR%s00.bin' % cid)
     var = _path(files, 'CHR%s%02d.bin' % (cid, int(outfit)))
     if not base:
@@ -113,7 +115,26 @@ def glb(files, cid, outfit, acc=0):
             p = os.path.join(files, 'accessory', '%s_%s.bin' % (joint, name))
             if os.path.isfile(p):
                 wear.append((joint, p))
-    c = hp2char.character(base, var, wear)
+    heads = None
+    if mii:
+        import mii as MII
+        res = MII.Res.from_disc(files)
+        info = MII.parse(mii)
+        if res and info:
+            # the three faces DDR II's dances switch between: normal, smile, blink (0x80188a04 / 0x8027153c)
+            # (the body's skin parts take the face's skin colour and its favourite-colour parts the Mii's
+            # favourite colour: 0x80057d14 reads both from the head - the skin as the RFL faceline colour is an
+            # assumption, the head object's +0xcc was not traced further)
+            heads = dict(heads=[MII.head(res, info, 256, e) for e in (0, 1, 5)], skin=MII.FACELINE[info['faceColor']],
+                         fav=MII.FAVORITE[min(info['color'], 11)])
+    part_files = None
+    if parts:
+        part_files = {}
+        for k, o in enumerate(parts[:4]):
+            pf = _path(files, 'CHR%s%02d.bin' % (cid, int(o)))
+            if pf:
+                part_files[k + 1] = pf
+    c = hp2char.character(base, var, wear, heads, part_files)
     return to_glb(c)
 
 
@@ -178,7 +199,14 @@ def to_glb(c):
             real.append(t)
     mats = []
     for m in c['materials']:
-        md = dict(pbrMetallicRoughness=dict(baseColorFactor=[1, 1, 1, 1], metallicFactor=0, roughnessFactor=1), doubleSided=True)
+        md = dict(pbrMetallicRoughness=dict(baseColorFactor=list(m.get('rgba') or [1, 1, 1, 1]), metallicFactor=0, roughnessFactor=1),
+                  doubleSided=m.get('cull', 'none') == 'none')
+        if m.get('part'):                           # (a Mii body's part, 1-4: OUTFIT 1-4)
+            md.setdefault('extras', {})['part'] = m['part']
+        if m.get('part'):                           # (a Mii body's part, 1-4: OUTFIT 1-4)
+            md.setdefault('extras', {})['part'] = m['part']
+        if m.get('blend'):                          # (a Mii head's see-through parts: face picture, nose line, glasses)
+            md['alphaMode'] = 'BLEND'
         if m['attrs']:
             bm = c['attrs'][m['attrs'][0]]['bitmap']
             if bm in tex_index:
